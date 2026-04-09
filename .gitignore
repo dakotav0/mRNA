@@ -8,10 +8,10 @@ outputs/
 unsloth_compiled_cache/
 
 # Data Exclusions (General)
-# We ignore the entire data tree by default to prevent accidental uploads of 
+# We ignore the entire /data tree by default to prevent accidental uploads of 
 # multi-GB activation tensors and private adapter weights.
-data/
-!data/.gitkeep
+/data/
+!/data/.gitkeep
 
 # Patterns for specific artifact types
 *.pt
