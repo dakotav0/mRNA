@@ -1,6 +1,7 @@
 [console_scripts]
-mrna-bleed-check = mrna.analysis.boundary:analyze_dataset_boundary
-mrna-eval = mrna.analysis.eval:evaluate_sae_holdouts
-mrna-harvest = mrna.factory.sampler:harvest_activations
-mrna-train-adapter = mrna.factory.adapter:train_adapter
-mrna-train-sae = mrna.factory.sae:train_sae_weights
+mrna-auto-train = mrna.orchestrator:main
+mrna-bleed-check = mrna.analysis.boundary:main
+mrna-eval = mrna.analysis.eval:main
+mrna-harvest = mrna.factory.sampler:main
+mrna-train-adapter = mrna.factory.adapter:main
+mrna-train-sae = mrna.factory.sae:main
