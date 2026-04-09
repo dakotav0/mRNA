@@ -14,7 +14,7 @@ dependencies = [
     "pyyaml",
     "tqdm"
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 
 [project.scripts]
 mrna-harvest = "mrna.factory.sampler:main"
