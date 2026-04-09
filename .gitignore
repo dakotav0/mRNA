@@ -25,4 +25,4 @@ unsloth_compiled_cache/
 .DS_Store
 .vscode/
 .idea/
-
+start-mrna.sh

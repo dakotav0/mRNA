@@ -11,7 +11,7 @@ mRNA is a production-ready framework for training, evaluating, and deploying spe
 ## Installation
 
 ```bash
-git clone https://github.com/kotaraine/mRNA.git
+git clone https://github.com/dakotav0/mRNA.git
 cd mRNA
 pip install -e .
 ```
