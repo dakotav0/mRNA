@@ -11,7 +11,7 @@ unsloth_compiled_cache/
 # We ignore the entire /data tree by default to prevent accidental uploads of 
 # multi-GB activation tensors and private adapter weights.
 /data/
-!/data/.gitkeep
+!/src/mrna/data/.gitkeep
 
 # Patterns for specific artifact types
 *.pt
