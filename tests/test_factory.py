@@ -31,12 +31,15 @@ def test_sampler_orchestration(mock_load_ds, mock_flm):
         )
         mock_flm.from_pretrained.assert_called()
 
+@patch("unsloth.is_bfloat16_supported")
+@patch("mrna.factory.adapter.TrainingArguments")
 @patch("unsloth.FastLanguageModel")
 @patch("trl.SFTTrainer")
 @patch("datasets.load_dataset")
 @patch("mrna.factory.adapter.HFDataset")
-def test_adapter_training_orchestration(mock_hf_ds, mock_load_ds, mock_trainer, mock_flm):
+def test_adapter_training_orchestration(mock_hf_ds, mock_load_ds, mock_trainer, mock_flm, mock_args, mock_bf16):
     """Verifies that train_adapter initializes the SFTTrainer."""
+    mock_bf16.return_value = False
     mock_model = MagicMock()
     mock_tokenizer = MagicMock()
     mock_tokenizer.eos_token = "</s>"
