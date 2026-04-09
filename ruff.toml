@@ -1,0 +1,36 @@
+# Ruff Configuration
+# https://docs.astral.sh/ruff/settings/
+
+target-version = "py312"
+line-length = 88
+
+[lint]
+# Enable Pyflakes (F), pycodestyle (E, W), and Bandit (S)
+select = ["F", "E", "W", "S", "I"]
+ignore = []
+
+# Allow fix for all enabled rules (when `--fix`)
+fixable = ["ALL"]
+unfixable = []
+
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".git",
+    ".pycache__",
+    ".venv",
+    "build",
+    "dist",
+    "data",
+    "models",
+    "adapters",
+]
+
+[lint.per-file-ignores]
+# Allow certain security violations in tests (e.g., assert)
+"tests/*" = ["S101"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
