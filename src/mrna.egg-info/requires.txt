@@ -1,0 +1,7 @@
+torch
+transformers
+unsloth
+trl
+datasets
+pyyaml
+tqdm

@@ -1,0 +1,6 @@
+[console_scripts]
+mrna-bleed-check = mrna.analysis.boundary:analyze_dataset_boundary
+mrna-eval = mrna.analysis.eval:evaluate_sae_holdouts
+mrna-harvest = mrna.factory.sampler:harvest_activations
+mrna-train-adapter = mrna.factory.adapter:train_adapter
+mrna-train-sae = mrna.factory.sae:train_sae_weights

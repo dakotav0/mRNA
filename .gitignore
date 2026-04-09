@@ -1,0 +1,28 @@
+.agents/
+.venv/
+__pycache__/
+
+# Large Artifacts
+models/
+outputs/
+unsloth_compiled_cache/
+
+# Data Exclusions (General)
+# We ignore the entire data tree by default to prevent accidental uploads of 
+# multi-GB activation tensors and private adapter weights.
+data/
+!data/.gitkeep
+
+# Patterns for specific artifact types
+*.pt
+*.pth
+*.bin
+*.pkl
+*.safetensors
+*.jsonl
+
+# System/IDE
+.DS_Store
+.vscode/
+.idea/
+

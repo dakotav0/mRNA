@@ -1,0 +1,31 @@
+[project]
+name = "mrna"
+version = "0.1.0"
+description = ".mrna: Neural routing and adapter infrastructure"
+authors = [
+    { name = "Dakota Veaux", email = "dakotaveaux@gmail.com" }
+]
+dependencies = [
+    "torch",
+    "transformers",
+    "unsloth",
+    "trl",
+    "datasets",
+    "pyyaml",
+    "tqdm"
+]
+requires-python = ">=3.10"
+
+[project.scripts]
+mrna-harvest = "mrna.factory.sampler:harvest_activations"
+mrna-train-adapter = "mrna.factory.adapter:train_adapter"
+mrna-train-sae = "mrna.factory.sae:train_sae_weights"
+mrna-bleed-check = "mrna.analysis.boundary:analyze_dataset_boundary"
+mrna-eval = "mrna.analysis.eval:evaluate_sae_holdouts"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
