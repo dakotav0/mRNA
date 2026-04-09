@@ -1,6 +1,6 @@
-# mRNA (Neural Routing & Adapter Infrastructure)
+# mRNA (Modular Representation Network Adapter)
 
-mRNA is a production-ready framework for training, evaluating, and deploying specialized LoRA adapters using **Concept Bottleneck Sparse Autoencoders (CBSAE)**. It provides the neural "routing" logic required for dynamic, multi-adapter inference pipelines like the MIIN NPC system.
+mRNA is a specialized LoRA adapters framework that utilizes **Concept Bottleneck Sparse Autoencoders (CBSAE)**. It provides the neural "routing" logic required for dynamic, multi-adapter inference pipelines.
 
 ## Features
 - 🧬 **Neural Routing**: Transition from keyword-based triggers to latent-space conceptual classification.

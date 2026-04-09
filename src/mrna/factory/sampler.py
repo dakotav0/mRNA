@@ -1,7 +1,7 @@
 import os
 import random
 import torch
-from datasets import load_dataset
+import datasets
 from typing import Optional, List
 
 from mrna.core.config import MRNAPaths, config
@@ -37,6 +37,8 @@ def harvest_activations(
     if not ds_id:
         raise ValueError(f"No dataset_id provided and concept '{concept}' not found in science triad.")
         
+    # Load dataset
+    ds = datasets.load_dataset(ds_id, split=kwargs.get("split", "train"), streaming=True)
     target_layer = layer if layer is not None else m_cfg.get("harvest_layer")
     max_seq_len = kwargs.get("max_seq_len", 512)
     model_revision = m_cfg.get("revision")
@@ -75,7 +77,7 @@ def harvest_activations(
 
     # 6. Load Dataset
     print(f"Loading dataset {ds_id}...")
-    ds = load_dataset(ds_id, split=kwargs.get("split", "train"), streaming=True)
+    ds = datasets.load_dataset(ds_id, split=kwargs.get("split", "train"), streaming=True)
     
     # 7. Harvest Loop (Simplified version of sandbox-scripts/harvest_hf.py)
     collected_train = []

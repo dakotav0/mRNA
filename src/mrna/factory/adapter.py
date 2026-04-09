@@ -1,8 +1,7 @@
 import os
 import torch
-from datasets import load_dataset, Dataset as HFDataset
-from unsloth import FastLanguageModel, is_bfloat16_supported
-from trl import SFTTrainer
+import datasets
+from datasets import Dataset as HFDataset
 from transformers import TrainingArguments
 from typing import Optional, Dict, Any, List
 from tqdm import tqdm
@@ -34,7 +33,7 @@ ALPACA_PROMPT = """Below is an instruction that describes a task, paired with an
 
 def get_dataset_formatter(dataset_id: str, tokenizer, text_column: Optional[str] = None):
     """Probes dataset and returns appropriate formatting function."""
-    sample = list(load_dataset(dataset_id, split="train", streaming=True).take(1))
+    sample = list(datasets.load_dataset(dataset_id, split="train", streaming=True).take(1))
     cols = list(sample[0].keys())
 
     if text_column:
@@ -77,6 +76,8 @@ def train_adapter(
     """
     Core LoRA training orchestration.
     """
+    from unsloth import FastLanguageModel, is_bfloat16_supported
+    from trl import SFTTrainer
     mid = model_id or config.current_model_id
     m_cfg = config.get_model_config(mid)
     ds_id = dataset_id or config.science_triad_datasets.get(concept)
@@ -102,7 +103,7 @@ def train_adapter(
     # 3. Process Dataset
     print(f"Loading and formatting {ds_id}...")
     formatter = get_dataset_formatter(ds_id, tokenizer, kwargs.get("text_column"))
-    ds_stream = load_dataset(ds_id, split=kwargs.get("split", "train"), streaming=True)
+    ds_stream = datasets.load_dataset(ds_id, split=kwargs.get("split", "train"), streaming=True)
     rows = list(tqdm(ds_stream.take(kwargs.get("max_examples", 5000)), desc="Streaming"))
     dataset = HFDataset.from_list(rows)
 

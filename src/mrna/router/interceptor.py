@@ -1,6 +1,6 @@
 import os
 import torch
-from unsloth import FastLanguageModel
+
 
 class ActivationInterceptor:
     """
@@ -95,8 +95,7 @@ class ActivationInterceptor:
 
 if __name__ == "__main__":
     print("=== Testing Priority 3: SAE Activation Interceptor ===")
-    
-    # Let's boot up the exact model we proved in test_llama.py!
+    from unsloth import FastLanguageModel
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name="unsloth/Llama-3.2-1B-Instruct",
         max_seq_length=2048,
