@@ -25,7 +25,12 @@ class CBSAE(nn.Module):
         concept_idx = sparse[:, :n_concepts].argmax(dim=-1)
     """
 
-    def __init__(self, d_model: int = 2048, expansion_factor: int = 8, bottleneck_features: int = 10):
+    def __init__(
+        self,
+        d_model: int = 2048,
+        expansion_factor: int = 8,
+        bottleneck_features: int = 10,
+    ):
         super().__init__()
         self.d_model = d_model
         self.d_sae = d_model * expansion_factor
@@ -57,7 +62,7 @@ class CBSAE(nn.Module):
         cb_loss = 0.0
         if labels is not None:
             cb_loss = F.binary_cross_entropy_with_logits(
-                sparse_features[:, :, :self.bottleneck_features],
+                sparse_features[:, :, : self.bottleneck_features],
                 labels,
             )
 

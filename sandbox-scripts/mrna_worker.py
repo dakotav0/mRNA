@@ -54,7 +54,7 @@ import sys
 # must be on PYTHONPATH before vLLM spawns workers — os.environ propagates to subprocesses,
 # sys.path.insert does not.
 _here = os.path.dirname(os.path.abspath(__file__))
-_src  = os.path.join(_here, "..", "src")
+_src = os.path.join(_here, "..", "src")
 for _p in [_here, _src]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -66,8 +66,8 @@ import gc
 from typing import Optional
 
 import torch
-from vllm.v1.worker.gpu_worker import Worker
 from vllm.lora.request import LoRARequest
+from vllm.v1.worker.gpu_worker import Worker
 
 from mrna.substrate.lora_merge import lora_merge
 
@@ -152,7 +152,9 @@ class mRNAWorker(Worker):
         """
         from vllm.lora.layers.base import BaseLayerWithLoRA
 
-        self._layer_map_built = True  # mark before any early return to avoid retry loops
+        self._layer_map_built = (
+            True  # mark before any early return to avoid retry loops
+        )
 
         if not hasattr(self, "model_runner") or self.model_runner is None:
             return
@@ -172,12 +174,14 @@ class mRNAWorker(Worker):
             weight = getattr(base, "weight", None)
             if weight is None or not isinstance(weight, torch.Tensor):
                 continue
-            self._linear_layers[name] = base   # store base_layer for weight.data
+            self._linear_layers[name] = base  # store base_layer for weight.data
             self._lora_wrappers[name] = module  # store wrapper for output_slices
             self._base_weights[name] = weight.data.clone()
             n += 1
 
-        print(f"[mRNAWorker] Layer map: {n} LoRA-capable layers tracked, base weights cloned.")
+        print(
+            f"[mRNAWorker] Layer map: {n} LoRA-capable layers tracked, base weights cloned."
+        )
 
     # ------------------------------------------------------------------
     # Extract concept_idx from SchedulerOutput
@@ -200,7 +204,9 @@ class mRNAWorker(Worker):
             for req in scheduler_output.scheduled_new_reqs:
                 lr = req.lora_request
                 if lr is not None:
-                    return lr.lora_int_id - 1   # undo +1 offset from StreamingExecutionNode
+                    return (
+                        lr.lora_int_id - 1
+                    )  # undo +1 offset from StreamingExecutionNode
         except (AttributeError, TypeError):
             pass
         return None
@@ -230,7 +236,9 @@ class mRNAWorker(Worker):
         try:
             adapter_manager = self.model_runner.lora_manager._adapter_manager
         except AttributeError:
-            print(f"[mRNAWorker] model_runner.lora_manager._adapter_manager not found — skipping merge.")
+            print(
+                "[mRNAWorker] model_runner.lora_manager._adapter_manager not found — skipping merge."
+            )
             return
 
         lora_model = adapter_manager.get_adapter(lora_int_id)
@@ -271,21 +279,26 @@ class mRNAWorker(Worker):
                         if s is not None and i < len(s) and s[i] is not None:
                             scale_i = float(s[i])
                         try:
-                            merged_W[offset:offset + slice_size, :] = lora_merge(
-                                W_full[offset:offset + slice_size, :].contiguous().half().cuda(),
+                            merged_W[offset : offset + slice_size, :] = lora_merge(
+                                W_full[offset : offset + slice_size, :]
+                                .contiguous()
+                                .half()
+                                .cuda(),
                                 A_i.contiguous().half().cuda(),
                                 B_i.contiguous().half().cuda(),
                                 scale_i,
                             )
                         except Exception as e:
-                            print(f"[mRNAWorker] lora_merge failed on {layer_name}[{i}]: {e}")
+                            print(
+                                f"[mRNAWorker] lora_merge failed on {layer_name}[{i}]: {e}"
+                            )
                     offset += slice_size
 
                 merged[layer_name] = merged_W
             else:
                 # Unpacked layer — simple W + scale * B @ A
-                A = layer_weights.lora_a                    # (rank, in)
-                B = layer_weights.lora_b                    # (out, rank)
+                A = layer_weights.lora_a  # (rank, in)
+                B = layer_weights.lora_b  # (out, rank)
                 scale = float(layer_weights.scaling)
 
                 try:
@@ -301,8 +314,10 @@ class mRNAWorker(Worker):
 
         if merged:
             self._merged_cache[concept_idx] = merged
-            print(f"[mRNAWorker] Merged {len(merged)} layers for concept_idx={concept_idx} "
-                  f"(lora_int_id={lora_int_id})")
+            print(
+                f"[mRNAWorker] Merged {len(merged)} layers for concept_idx={concept_idx} "
+                f"(lora_int_id={lora_int_id})"
+            )
 
     # ------------------------------------------------------------------
     # Apply / restore
@@ -325,6 +340,7 @@ class mRNAWorker(Worker):
 # Drop-in for StreamingExecutionNode
 # ---------------------------------------------------------------------------
 
+
 class MergedStreamingExecutionNode:
     """
     Drop-in replacement for StreamingExecutionNode using mRNAWorker.
@@ -345,6 +361,7 @@ class MergedStreamingExecutionNode:
         max_loras: int = 2,
     ):
         from vllm import LLM
+
         print(f"[MergedExecutionNode] Initializing with mRNAWorker on {model_id} ...")
         # vLLM 0.18.1 requires worker_cls as a dotted import string —
         # it is pickled and re-imported in the worker subprocess.
@@ -364,9 +381,12 @@ class MergedStreamingExecutionNode:
         self, prompt: str, adapter_path: str, adapter_id: int
     ) -> None:
         from vllm import SamplingParams
+
         sampling_params = SamplingParams(temperature=0.7, min_tokens=8, max_tokens=128)
 
-        print(f"\n[MergedExecution] concept_idx={adapter_id - 1}  adapter={adapter_path}")
+        print(
+            f"\n[MergedExecution] concept_idx={adapter_id - 1}  adapter={adapter_path}"
+        )
 
         if not os.path.exists(adapter_path):
             print("[MergedExecution] Adapter not on disk — base model fallback.")
@@ -385,10 +405,13 @@ class MergedStreamingExecutionNode:
         print("\n[MergedExecution] Shutting down...")
         for _fn in [
             lambda: self.engine.llm_engine.shutdown(),
-            lambda: self.engine.llm_engine.worker_executor.shutdown(await_termination=True),
+            lambda: self.engine.llm_engine.worker_executor.shutdown(
+                await_termination=True
+            ),
         ]:
             try:
-                _fn(); break
+                _fn()
+                break
             except AttributeError:
                 continue
         del self.engine
@@ -405,34 +428,34 @@ if __name__ == "__main__":
     # Science triad — adapter_id = concept_idx + 1 (1-indexed for vLLM LoRARequest)
     SCIENCE_CASES = [
         {
-            "prompt":       "What is the role of mitochondria in eukaryotic cells?",
+            "prompt": "What is the role of mitochondria in eukaryotic cells?",
             "adapter_path": "/home/kotaraine/Coder/mRNA/adapters/biology_lora",
-            "adapter_id":   1,  # biology
+            "adapter_id": 1,  # biology
         },
         {
-            "prompt":       "Explain the process of DNA replication and the enzymes involved.",
+            "prompt": "Explain the process of DNA replication and the enzymes involved.",
             "adapter_path": "/home/kotaraine/Coder/mRNA/adapters/biology_lora",
-            "adapter_id":   1,
+            "adapter_id": 1,
         },
         {
-            "prompt":       "What is the difference between ionic and covalent bonding?",
+            "prompt": "What is the difference between ionic and covalent bonding?",
             "adapter_path": "/home/kotaraine/Coder/mRNA/adapters/chemistry_lora",
-            "adapter_id":   2,  # chemistry
+            "adapter_id": 2,  # chemistry
         },
         {
-            "prompt":       "Explain Le Chatelier's principle with an example.",
+            "prompt": "Explain Le Chatelier's principle with an example.",
             "adapter_path": "/home/kotaraine/Coder/mRNA/adapters/chemistry_lora",
-            "adapter_id":   2,
+            "adapter_id": 2,
         },
         {
-            "prompt":       "What is the relationship between electric field and electric potential?",
+            "prompt": "What is the relationship between electric field and electric potential?",
             "adapter_path": "/home/kotaraine/Coder/mRNA/adapters/physics_lora",
-            "adapter_id":   3,  # physics
+            "adapter_id": 3,  # physics
         },
         {
-            "prompt":       "Explain how a Carnot engine achieves maximum thermodynamic efficiency.",
+            "prompt": "Explain how a Carnot engine achieves maximum thermodynamic efficiency.",
             "adapter_path": "/home/kotaraine/Coder/mRNA/adapters/physics_lora",
-            "adapter_id":   3,
+            "adapter_id": 3,
         },
     ]
 

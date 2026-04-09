@@ -20,8 +20,8 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 
-from mrna.router.sae import CBSAE
 from mrna.execution.streaming_lora import StreamingExecutionNode
+from mrna.router.sae import CBSAE
 from mrna.substrate.lora_merge import lora_merge
 
 
@@ -107,12 +107,12 @@ class mRNAPipeline:
         """
         with torch.no_grad():
             # Pool over sequence → (batch, d_model), then encode
-            pooled   = activations.mean(dim=1).float()
-            pre_relu = self.sae.encoder(pooled)            # (batch, d_sae) — full logit range
+            pooled = activations.mean(dim=1).float()
+            pre_relu = self.sae.encoder(pooled)  # (batch, d_sae) — full logit range
 
             # Argmax over pre-ReLU bottleneck logits (matches CrossEntropy training objective)
-            bottleneck = pre_relu[:, :self.n_concepts]     # (batch, n_concepts)
-            concept_strengths = bottleneck.mean(dim=0)     # (n_concepts,)
+            bottleneck = pre_relu[:, : self.n_concepts]  # (batch, n_concepts)
+            concept_strengths = bottleneck.mean(dim=0)  # (n_concepts,)
 
             concept_idx = int(concept_strengths.argmax().item())
             confidence = float(concept_strengths[concept_idx].item())

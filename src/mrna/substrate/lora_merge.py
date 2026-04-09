@@ -34,31 +34,40 @@ import torch
 import triton
 import triton.language as tl
 
-
 # ---------------------------------------------------------------------------
 # Kernel
 # ---------------------------------------------------------------------------
 
+
 @triton.autotune(
     configs=[
-        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_R": 16}, num_warps=4),
-        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_R": 16}, num_warps=4),
-        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_R": 16}, num_warps=4),
+        triton.Config({"BLOCK_M": 64, "BLOCK_N": 64, "BLOCK_R": 16}, num_warps=4),
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64, "BLOCK_R": 16}, num_warps=4),
+        triton.Config({"BLOCK_M": 64, "BLOCK_N": 128, "BLOCK_R": 16}, num_warps=4),
         triton.Config({"BLOCK_M": 128, "BLOCK_N": 128, "BLOCK_R": 16}, num_warps=8),
-        triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_R": 32}, num_warps=4),
-        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64,  "BLOCK_R": 32}, num_warps=4),
+        triton.Config({"BLOCK_M": 64, "BLOCK_N": 64, "BLOCK_R": 32}, num_warps=4),
+        triton.Config({"BLOCK_M": 128, "BLOCK_N": 64, "BLOCK_R": 32}, num_warps=4),
     ],
     key=["M", "N", "R"],
 )
 @triton.jit
 def lora_merge_kernel(
-    w_ptr, a_ptr, b_ptr, c_ptr,
-    M, N, R,
+    w_ptr,
+    a_ptr,
+    b_ptr,
+    c_ptr,
+    M,
+    N,
+    R,
     scale,
-    stride_wm, stride_wn,
-    stride_ar, stride_an,
-    stride_bm, stride_br,
-    stride_cm, stride_cn,
+    stride_wm,
+    stride_wn,
+    stride_ar,
+    stride_an,
+    stride_bm,
+    stride_br,
+    stride_cm,
+    stride_cn,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_R: tl.constexpr,
@@ -134,7 +143,10 @@ def lora_merge_kernel(
 # Python wrapper
 # ---------------------------------------------------------------------------
 
-def lora_merge(W: torch.Tensor, A: torch.Tensor, B: torch.Tensor, scale: float) -> torch.Tensor:
+
+def lora_merge(
+    W: torch.Tensor, A: torch.Tensor, B: torch.Tensor, scale: float
+) -> torch.Tensor:
     """
     Fused weight merge: C = W + scale * B @ A
 
@@ -155,16 +167,20 @@ def lora_merge(W: torch.Tensor, A: torch.Tensor, B: torch.Tensor, scale: float) 
     W.shape[1] == A.shape[1]  (N — in_features)
     A.shape[0] == B.shape[1]  (R — LoRA rank)
     """
-    assert W.is_contiguous() and A.is_contiguous() and B.is_contiguous(), \
+    assert W.is_contiguous() and A.is_contiguous() and B.is_contiguous(), (
         "All input tensors must be contiguous. Call .contiguous() if needed."
-    assert W.dtype == torch.float16 and A.dtype == torch.float16 and B.dtype == torch.float16, \
-        "Kernel expects FP16 inputs."
+    )
+    assert (
+        W.dtype == torch.float16
+        and A.dtype == torch.float16
+        and B.dtype == torch.float16
+    ), "Kernel expects FP16 inputs."
 
     M, N = W.shape
     R, _ = A.shape
 
     assert B.shape == (M, R), f"B shape mismatch: expected ({M}, {R}), got {B.shape}"
-    assert A.shape[1] == N,   f"A shape mismatch: expected (R, {N}), got {A.shape}"
+    assert A.shape[1] == N, f"A shape mismatch: expected (R, {N}), got {A.shape}"
 
     C = torch.empty_like(W)
 
@@ -174,13 +190,22 @@ def lora_merge(W: torch.Tensor, A: torch.Tensor, B: torch.Tensor, scale: float) 
     )
 
     lora_merge_kernel[grid](
-        W, A, B, C,
-        M, N, R,
+        W,
+        A,
+        B,
+        C,
+        M,
+        N,
+        R,
         scale,
-        W.stride(0), W.stride(1),
-        A.stride(0), A.stride(1),
-        B.stride(0), B.stride(1),
-        C.stride(0), C.stride(1),
+        W.stride(0),
+        W.stride(1),
+        A.stride(0),
+        A.stride(1),
+        B.stride(0),
+        B.stride(1),
+        C.stride(0),
+        C.stride(1),
     )
     return C
 
@@ -188,6 +213,7 @@ def lora_merge(W: torch.Tensor, A: torch.Tensor, B: torch.Tensor, scale: float) 
 # ---------------------------------------------------------------------------
 # Benchmark
 # ---------------------------------------------------------------------------
+
 
 def _baseline_naive(W, A, B, scale):
     """Three-operation naive: two separate kernel launches, one intermediate."""
@@ -216,7 +242,7 @@ def run_benchmark(M=4096, N=4096, R=16, scale=0.5):
     ref = _baseline_naive(W, A, B, scale)
     out = lora_merge(W, A, B, scale)
     max_diff = (ref.float() - out.float()).abs().max().item()
-    rel_err  = max_diff / ref.float().abs().max().item()
+    rel_err = max_diff / ref.float().abs().max().item()
     print(f"\nCorrectness check (M={M}, N={N}, R={R})")
     print(f"  Max abs diff : {max_diff:.6f}")
     print(f"  Relative err : {rel_err:.4%}")
@@ -228,14 +254,18 @@ def run_benchmark(M=4096, N=4096, R=16, scale=0.5):
     _ = compiled_baseline(W, A, B, scale)
 
     # --- Timing ---
-    t_naive   = triton.testing.do_bench(lambda: _baseline_naive(W, A, B, scale))
+    t_naive = triton.testing.do_bench(lambda: _baseline_naive(W, A, B, scale))
     t_compile = triton.testing.do_bench(lambda: compiled_baseline(W, A, B, scale))
-    t_triton  = triton.testing.do_bench(lambda: lora_merge(W, A, B, scale))
+    t_triton = triton.testing.do_bench(lambda: lora_merge(W, A, B, scale))
 
     print(f"\nBenchmark (M={M}, N={N}, R={R})")
     print(f"  PyTorch naive    : {t_naive:.4f} ms")
-    print(f"  torch.compile    : {t_compile:.4f} ms  ({t_naive/t_compile:.2f}x vs naive)")
-    print(f"  Triton fused     : {t_triton:.4f} ms  ({t_naive/t_triton:.2f}x vs naive)")
+    print(
+        f"  torch.compile    : {t_compile:.4f} ms  ({t_naive / t_compile:.2f}x vs naive)"
+    )
+    print(
+        f"  Triton fused     : {t_triton:.4f} ms  ({t_naive / t_triton:.2f}x vs naive)"
+    )
 
     target = 2.4
     achieved = t_naive / t_triton
@@ -247,12 +277,16 @@ def run_benchmark(M=4096, N=4096, R=16, scale=0.5):
     # Naive also writes delta (M*N) and reads it back — +2 * M*N transfers
     bytes_fused = (3 * M * N + M * R + R * N) * 2  # FP16 = 2 bytes, approx
     bytes_naive = bytes_fused + 2 * M * N * 2
-    bw_peak_gb  = 504.2  # RTX 4070 Super HBM bandwidth (GB/s)
+    bw_peak_gb = 504.2  # RTX 4070 Super HBM bandwidth (GB/s)
     bw_fused_gb = (bytes_fused / 1e9) / (t_triton / 1e3)
-    print(f"\n  Effective bandwidth (Triton): {bw_fused_gb:.1f} GB/s  "
-          f"(peak: {bw_peak_gb} GB/s, {bw_fused_gb/bw_peak_gb:.1%} utilization)")
-    print(f"  HBM bytes saved vs naive   : {(bytes_naive - bytes_fused)/1e6:.1f} MB "
-          f"per merge event")
+    print(
+        f"\n  Effective bandwidth (Triton): {bw_fused_gb:.1f} GB/s  "
+        f"(peak: {bw_peak_gb} GB/s, {bw_fused_gb / bw_peak_gb:.1%} utilization)"
+    )
+    print(
+        f"  HBM bytes saved vs naive   : {(bytes_naive - bytes_fused) / 1e6:.1f} MB "
+        f"per merge event"
+    )
 
 
 if __name__ == "__main__":

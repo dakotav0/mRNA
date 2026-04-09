@@ -40,11 +40,12 @@ from datasets import load_dataset
 from unsloth import FastLanguageModel
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from mrna.router.interceptor import ActivationInterceptor
-from mrna.router.pooling import masked_mean_pool, get_unsloth_base_tokenizer
+import random
+
 from mrna.data.dataset_utils import extract_text, extract_text2
 from mrna.data.paths import MRNAPaths
-import random
+from mrna.router.interceptor import ActivationInterceptor
+from mrna.router.pooling import get_unsloth_base_tokenizer, masked_mean_pool
 
 
 def harvest(
@@ -66,8 +67,12 @@ def harvest(
     holdout_ratio: float = 0.0,
 ):
     paths = MRNAPaths(model_id=model_id)
-    train_path = paths.get_activation_file(layer, concept, "train" if holdout_ratio > 0 else None)
-    test_path = paths.get_activation_file(layer, concept, "test") if holdout_ratio > 0 else None
+    train_path = paths.get_activation_file(
+        layer, concept, "train" if holdout_ratio > 0 else None
+    )
+    test_path = (
+        paths.get_activation_file(layer, concept, "test") if holdout_ratio > 0 else None
+    )
 
     # ------------------------------------------------------------------
     # Cache / Skip check
@@ -75,9 +80,11 @@ def harvest(
     if skip_if_exists and os.path.exists(train_path):
         prev = torch.load(train_path, map_location="cpu", weights_only=True)
         if len(prev) >= max_examples:
-            print(f"Skipping: {train_path} already contains {len(prev)} examples (requested {max_examples}).")
+            print(
+                f"Skipping: {train_path} already contains {len(prev)} examples (requested {max_examples})."
+            )
             return
-    
+
     # ------------------------------------------------------------------
     # Resume detection
     # ------------------------------------------------------------------
@@ -93,7 +100,7 @@ def harvest(
         prev_test = torch.load(test_path, map_location="cpu", weights_only=True)
         existing_test = [prev_test]
         already_done += len(prev_test)
-    
+
     if already_done > 0:
         print(f"Resuming: found {already_done} existing activations for {concept}")
 
@@ -105,7 +112,9 @@ def harvest(
     # ------------------------------------------------------------------
     # Load dataset (cached locally via Parquet/Arrow to avoid streaming IO bottlenecks)
     # ------------------------------------------------------------------
-    print(f"Loading dataset '{dataset_id}'{f' (config: {dataset_config})' if dataset_config else ''} in streaming mode...")
+    print(
+        f"Loading dataset '{dataset_id}'{f' (config: {dataset_config})' if dataset_config else ''} in streaming mode..."
+    )
     load_kwargs = dict(split=split, streaming=True)
     if dataset_config:
         load_kwargs["name"] = dataset_config
@@ -122,7 +131,9 @@ def harvest(
     # ------------------------------------------------------------------
     rev_label = f" @ {model_revision[:8]}" if model_revision else ""
     print(f"Loading base model '{model_id}'{rev_label} (4-bit)...")
-    load_kwargs = dict(model_name=model_id, max_seq_length=max_seq_len, dtype=None, load_in_4bit=True)
+    load_kwargs = dict(
+        model_name=model_id, max_seq_length=max_seq_len, dtype=None, load_in_4bit=True
+    )
     if model_revision:
         load_kwargs["revision"] = model_revision
     model, tokenizer = FastLanguageModel.from_pretrained(**load_kwargs)
@@ -145,9 +156,13 @@ def harvest(
     n_saved_total = already_done
 
     print(f"\nHarvesting {remaining} examples for concept '{concept}' ...")
-    print(f"  Layer: {layer}  |  max_seq_len: {max_seq_len}  |  batch_size: {batch_size}\n")
+    print(
+        f"  Layer: {layer}  |  max_seq_len: {max_seq_len}  |  batch_size: {batch_size}\n"
+    )
     if holdout_ratio > 0:
-        print(f"  Holdout Enabled: {holdout_ratio*100}% of activations going to holdout test set.")
+        print(
+            f"  Holdout Enabled: {holdout_ratio * 100}% of activations going to holdout test set."
+        )
 
     batch_texts: list[str] = []
 
@@ -201,7 +216,9 @@ def harvest(
 
         if len(batch_texts) >= batch_size:
             flush_batch()
-            print(f"  {already_done + len(collected_train) + len(collected_test):>5} / {already_done + remaining}")
+            print(
+                f"  {already_done + len(collected_train) + len(collected_test):>5} / {already_done + remaining}"
+            )
 
     # Final partial batch
     flush_batch()
@@ -216,11 +233,17 @@ def harvest(
 
     total = already_done + len(collected_train) + len(collected_test)
     print(f"\nDone. Saved {total} pooled activations ({model_id}, layer {layer})")
-    print(f"  Train: {len(collected_train) + (len(existing_train[-1]) if existing_train else 0)} elements -> {train_path}")
+    print(
+        f"  Train: {len(collected_train) + (len(existing_train[-1]) if existing_train else 0)} elements -> {train_path}"
+    )
     if test_path:
-        print(f"  Test: {len(collected_test) + (len(existing_test[-1]) if existing_test else 0)} elements -> {test_path}")
-    print(f"\nNext step:\n  python sandbox-scripts/train_sae.py "
-          f"--activations {concept}:{train_path} ...")
+        print(
+            f"  Test: {len(collected_test) + (len(existing_test[-1]) if existing_test else 0)} elements -> {test_path}"
+        )
+    print(
+        f"\nNext step:\n  python sandbox-scripts/train_sae.py "
+        f"--activations {concept}:{train_path} ..."
+    )
 
 
 def _save(path: str, existing: list, new: list):
@@ -234,42 +257,79 @@ def _save(path: str, existing: list, new: list):
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Harvest pooled activations from an HF dataset using prefill-only forward passes.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--dataset",        required=True,  help="HF dataset ID")
-    parser.add_argument("--dataset-config", default=None,   help="HF dataset config/subset name")
-    parser.add_argument("--split",          default="train")
-    parser.add_argument("--text-column",    default="text",  help="Column name to use as prompt text")
-    parser.add_argument("--text-column2",   default=None,
-                        help="Optional second column to concatenate (e.g. message_2 for Q+A). "
-                             "Provides richer domain signal for SAE boundary disambiguation.")
-    parser.add_argument("--concept",        required=True,   help="Concept name for this dataset (e.g. python, legal)")
-    parser.add_argument("--model-id",       default="unsloth/gemma-4-E2B-it")
-    parser.add_argument("--model-revision", default="37ea165b3fba25b7d851f8ce4ccff9a4f0751cee",
-                        help="HF commit hash to pin. Prevents silent weight updates from breaking "
-                             "harvest/SAE/GGUF consistency. Matches the revision GGUF was built from.")
-    parser.add_argument("--layer",          type=int, default=25,
-                        help="Transformer layer to intercept (25 = 70% depth for 35-layer Gemma 4 E2B; "
-                             "layer 17 midpoint gives chem/physics boundary ambiguity)")
-    parser.add_argument("--max-seq-len",    type=int, default=512,
-                        help="Truncate inputs to this length (controls VRAM per batch)")
-    parser.add_argument("--max-examples",   type=int, default=5000)
-    parser.add_argument("--batch-size",     type=int, default=8)
-    parser.add_argument("--save-every",     type=int, default=500,
-                        help="Checkpoint to disk every N examples")
-    parser.add_argument("--no-skip",        action="store_false", dest="skip_if_exists", 
-                        help="Disable automatic skipping if the output file already exists")
-    parser.add_argument("--holdout-ratio", type=float, default=0.2, 
-                        help="Fraction of examples to save into a distinct '_test.pt' file")
-    parser.add_argument("--device",         default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--dataset", required=True, help="HF dataset ID")
+    parser.add_argument(
+        "--dataset-config", default=None, help="HF dataset config/subset name"
+    )
+    parser.add_argument("--split", default="train")
+    parser.add_argument(
+        "--text-column", default="text", help="Column name to use as prompt text"
+    )
+    parser.add_argument(
+        "--text-column2",
+        default=None,
+        help="Optional second column to concatenate (e.g. message_2 for Q+A). "
+        "Provides richer domain signal for SAE boundary disambiguation.",
+    )
+    parser.add_argument(
+        "--concept",
+        required=True,
+        help="Concept name for this dataset (e.g. python, legal)",
+    )
+    parser.add_argument("--model-id", default="unsloth/gemma-4-E2B-it")
+    parser.add_argument(
+        "--model-revision",
+        default="37ea165b3fba25b7d851f8ce4ccff9a4f0751cee",
+        help="HF commit hash to pin. Prevents silent weight updates from breaking "
+        "harvest/SAE/GGUF consistency. Matches the revision GGUF was built from.",
+    )
+    parser.add_argument(
+        "--layer",
+        type=int,
+        default=25,
+        help="Transformer layer to intercept (25 = 70% depth for 35-layer Gemma 4 E2B; "
+        "layer 17 midpoint gives chem/physics boundary ambiguity)",
+    )
+    parser.add_argument(
+        "--max-seq-len",
+        type=int,
+        default=512,
+        help="Truncate inputs to this length (controls VRAM per batch)",
+    )
+    parser.add_argument("--max-examples", type=int, default=5000)
+    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument(
+        "--save-every",
+        type=int,
+        default=500,
+        help="Checkpoint to disk every N examples",
+    )
+    parser.add_argument(
+        "--no-skip",
+        action="store_false",
+        dest="skip_if_exists",
+        help="Disable automatic skipping if the output file already exists",
+    )
+    parser.add_argument(
+        "--holdout-ratio",
+        type=float,
+        default=0.2,
+        help="Fraction of examples to save into a distinct '_test.pt' file",
+    )
+    parser.add_argument(
+        "--device", default="cuda" if torch.cuda.is_available() else "cpu"
+    )
 
     args = parser.parse_args()
 
     paths = MRNAPaths(model_id=args.model_id)
-    print(f"\n--- mRNA Activation Harvesting Tool ---")
+    print("\n--- mRNA Activation Harvesting Tool ---")
     print(f"Concept: {args.concept}")
     print(f"Output Directory: {paths.get_activations_dir(args.layer)}")
 
@@ -295,9 +355,10 @@ def main():
 
 if __name__ == "__main__":
     import traceback
+
     try:
         main()
     except Exception as e:
-        print(f"\n[FATAL] Script crashed at startup!")
+        print("\n[FATAL] Script crashed at startup!")
         traceback.print_exc()
         sys.exit(1)

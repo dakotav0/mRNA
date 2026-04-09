@@ -1,5 +1,8 @@
-from mrna.core.config import config, MRNAPaths as NewPaths
 import os
+
+from mrna.core.config import MRNAPaths as NewPaths
+from mrna.core.config import config
+
 
 class MRNAPaths:
     def __init__(self, data_root: str = "data", model_id: str = None):

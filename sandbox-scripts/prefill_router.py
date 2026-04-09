@@ -64,14 +64,14 @@ import torch
 import torch.nn.functional as F
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+from mrna.execution.llama_cpp_node import LlamaCppExecutionNode
 from mrna.router.interceptor import ActivationInterceptor
 from mrna.router.sae import CBSAE
-from mrna.execution.llama_cpp_node import LlamaCppExecutionNode
-
 
 # ---------------------------------------------------------------------------
 # Router — unsloth prefill-only pass
 # ---------------------------------------------------------------------------
+
 
 class PrefillRouter:
     """
@@ -92,8 +92,15 @@ class PrefillRouter:
         from unsloth import FastLanguageModel
 
         rev_label = f" @ {model_revision[:8]}" if model_revision else ""
-        print(f"[PrefillRouter] Loading {model_id!r}{rev_label} for prefill-only routing ...")
-        load_kwargs = dict(model_name=model_id, max_seq_length=max_seq_len, dtype=None, load_in_4bit=True)
+        print(
+            f"[PrefillRouter] Loading {model_id!r}{rev_label} for prefill-only routing ..."
+        )
+        load_kwargs = dict(
+            model_name=model_id,
+            max_seq_length=max_seq_len,
+            dtype=None,
+            load_in_4bit=True,
+        )
         if model_revision:
             load_kwargs["revision"] = model_revision
         self.model, self.tokenizer = FastLanguageModel.from_pretrained(**load_kwargs)
@@ -138,10 +145,10 @@ class PrefillRouter:
         # Masked mean pool — matches harvest_hf.py's pooling exactly.
         # With batch_size=1 there's no padding, but using the mask is consistent
         # and guards against future batched use.
-        mask     = enc["attention_mask"].cpu().unsqueeze(-1).float()  # (1, seq_len, 1)
-        pooled   = ((acts * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)).float()
-        pre_relu = self.sae.encoder(pooled)                          # (1, d_sae)
-        bottleneck = pre_relu[:, :len(self.concept_names)]   # (1, n_concepts)
+        mask = enc["attention_mask"].cpu().unsqueeze(-1).float()  # (1, seq_len, 1)
+        pooled = ((acts * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)).float()
+        pre_relu = self.sae.encoder(pooled)  # (1, d_sae)
+        bottleneck = pre_relu[:, : len(self.concept_names)]  # (1, n_concepts)
         strengths = bottleneck[0]
 
         concept_idx = int(strengths.argmax().item())
@@ -197,29 +204,36 @@ DEMO_CASES = [
 
 # PEFT adapter dirs (used by PrefillRouter.adapter_registry for display only)
 ADAPTER_REGISTRY = {
-    "biology":   "data/gemma-4-e2b/adapters/biology_lora",
+    "biology": "data/gemma-4-e2b/adapters/biology_lora",
     "chemistry": "data/gemma-4-e2b/adapters/chemistry_lora",
-    "physics":   "data/gemma-4-e2b/adapters/physics_lora",
+    "physics": "data/gemma-4-e2b/adapters/physics_lora",
 }
 
 # GGUF LoRA paths for llama-server (convert with convert_adapters_to_gguf.py first)
 GGUF_ADAPTER_REGISTRY = {
-    "biology":   "data/gemma-4-e2b/adapters/biology_lora/biology.gguf",
+    "biology": "data/gemma-4-e2b/adapters/biology_lora/biology.gguf",
     "chemistry": "data/gemma-4-e2b/adapters/chemistry_lora/chemistry.gguf",
-    "physics":   "data/gemma-4-e2b/adapters/physics_lora/physics.gguf",
+    "physics": "data/gemma-4-e2b/adapters/physics_lora/physics.gguf",
 }
 
 
-def run_demo(model_id: str, layer: int, sae_weights: str | None, d_model: int,
-             model_path: str = "models/gemma-4-e2b-q8.gguf",
-             model_revision: str | None = None):
+def run_demo(
+    model_id: str,
+    layer: int,
+    sae_weights: str | None,
+    d_model: int,
+    model_path: str = "models/gemma-4-e2b-q8.gguf",
+    model_revision: str | None = None,
+):
     concept_names = list(ADAPTER_REGISTRY.keys())
     n_concepts = len(concept_names)
 
     # SAE — load trained weights if available, else random init
     sae = CBSAE(d_model=d_model, expansion_factor=8, bottleneck_features=n_concepts)
     if sae_weights and os.path.exists(sae_weights):
-        sae.load_state_dict(torch.load(sae_weights, map_location="cpu", weights_only=True))
+        sae.load_state_dict(
+            torch.load(sae_weights, map_location="cpu", weights_only=True)
+        )
         print(f"[SAE] Loaded weights from {sae_weights}")
     else:
         if sae_weights:
@@ -227,7 +241,9 @@ def run_demo(model_id: str, layer: int, sae_weights: str | None, d_model: int,
             print("      Routing decisions will be random until the SAE is trained.")
             print("      Run harvest_hf.py + train_sae.py to fix this.\n")
         else:
-            print("[SAE] No weights provided — using random init (structural test only).\n")
+            print(
+                "[SAE] No weights provided — using random init (structural test only).\n"
+            )
 
     # Build prefill router
     router = PrefillRouter(
@@ -243,7 +259,7 @@ def run_demo(model_id: str, layer: int, sae_weights: str | None, d_model: int,
     execution = LlamaCppExecutionNode(
         model_path=model_path,
         adapter_registry=GGUF_ADAPTER_REGISTRY,
-        tokenizer=router.tokenizer,   # for chat template formatting
+        tokenizer=router.tokenizer,  # for chat template formatting
     )
 
     print("\n" + "=" * 60)
@@ -264,10 +280,12 @@ def run_demo(model_id: str, layer: int, sae_weights: str | None, d_model: int,
         total_route_ms += latency
 
         match = "✓" if name == expected else "✗"
-        print(f"  {match} Routed → '{name}'  (confidence={conf:.4f}, latency={latency:.1f}ms)")
+        print(
+            f"  {match} Routed → '{name}'  (confidence={conf:.4f}, latency={latency:.1f}ms)"
+        )
         gguf_path = GGUF_ADAPTER_REGISTRY.get(name, path)
         print(f"  Adapter GGUF: {gguf_path}")
-        print(f"  Handing off to llama-server ...")
+        print("  Handing off to llama-server ...")
 
         # llama-server takes over with the selected adapter
         execution.run_inference_with_adapter(prompt, gguf_path, idx + 1)
@@ -279,43 +297,67 @@ def run_demo(model_id: str, layer: int, sae_weights: str | None, d_model: int,
     execution.cleanup()
 
     print("\n" + "=" * 60)
-    print(f"Routing accuracy : {correct}/{len(DEMO_CASES)}  "
-          f"({'random-init SAE — meaningless' if not sae_weights else 'trained SAE'})")
-    print(f"Avg route latency: {total_route_ms / len(DEMO_CASES):.1f} ms  "
-          f"(prefill-only pass, no generation)")
+    print(
+        f"Routing accuracy : {correct}/{len(DEMO_CASES)}  "
+        f"({'random-init SAE — meaningless' if not sae_weights else 'trained SAE'})"
+    )
+    print(
+        f"Avg route latency: {total_route_ms / len(DEMO_CASES):.1f} ms  "
+        f"(prefill-only pass, no generation)"
+    )
     print("=" * 60)
 
     if not sae_weights or not os.path.exists(sae_weights or ""):
         print("\nNext steps:")
-        print("  1. python sandbox-scripts/harvest_hf.py --dataset iamtarun/python_code_instructions_18k_alpaca \\")
-        print("         --text-column instruction --concept python --output data/python_layer6.pt")
+        print(
+            "  1. python sandbox-scripts/harvest_hf.py --dataset iamtarun/python_code_instructions_18k_alpaca \\"
+        )
+        print(
+            "         --text-column instruction --concept python --output data/python_layer6.pt"
+        )
         print("  2. (repeat for each concept)")
         print("  3. python sandbox-scripts/train_sae.py \\")
-        print("         --activations python:data/python_layer6.pt legal:data/legal_layer6.pt ... \\")
+        print(
+            "         --activations python:data/python_layer6.pt legal:data/legal_layer6.pt ... \\"
+        )
         print("         --output data/sae_weights.pt")
-        print("  4. python sandbox-scripts/convert_adapters_to_gguf.py --base-model models/gemma-4-e2b-q8.gguf --adapters biology chemistry physics")
-        print("  5. python sandbox-scripts/prefill_router.py --sae-weights data/sae_weights.pt --model-path models/gemma-4-e2b-q8.gguf")
+        print(
+            "  4. python sandbox-scripts/convert_adapters_to_gguf.py --base-model models/gemma-4-e2b-q8.gguf --adapters biology chemistry physics"
+        )
+        print(
+            "  5. python sandbox-scripts/prefill_router.py --sae-weights data/sae_weights.pt --model-path models/gemma-4-e2b-q8.gguf"
+        )
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Prefill-only unsloth routing prototype → vLLM generation.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--model-id",       default="unsloth/gemma-4-E2B-it")
-    parser.add_argument("--model-revision", default="37ea165b3fba25b7d851f8ce4ccff9a4f0751cee",
-                        help="HF commit hash. Pinned to match GGUF + adapter training snapshot.")
-    parser.add_argument("--model-path",  default="models/gemma-4-e2b-q8.gguf",
-                        help="Path to the GGUF base model for llama-server.")
-    parser.add_argument("--layer",       type=int, default=25)
-    parser.add_argument("--sae-weights", default="data/gemma-4-e2b/sae/w_25.pt",
-                        help="Path to trained CBSAE state_dict (.pt). "
-                             "Omit or set to None to run structural test with random-init SAE.")
-    parser.add_argument("--d-model",     type=int, default=1536)
+    parser.add_argument("--model-id", default="unsloth/gemma-4-E2B-it")
+    parser.add_argument(
+        "--model-revision",
+        default="37ea165b3fba25b7d851f8ce4ccff9a4f0751cee",
+        help="HF commit hash. Pinned to match GGUF + adapter training snapshot.",
+    )
+    parser.add_argument(
+        "--model-path",
+        default="models/gemma-4-e2b-q8.gguf",
+        help="Path to the GGUF base model for llama-server.",
+    )
+    parser.add_argument("--layer", type=int, default=25)
+    parser.add_argument(
+        "--sae-weights",
+        default="data/gemma-4-e2b/sae/w_25.pt",
+        help="Path to trained CBSAE state_dict (.pt). "
+        "Omit or set to None to run structural test with random-init SAE.",
+    )
+    parser.add_argument("--d-model", type=int, default=1536)
     args = parser.parse_args()
 
     run_demo(

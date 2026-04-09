@@ -1,14 +1,16 @@
 import os
 import random
-import torch
+from typing import List, Optional
+
 import datasets
-from typing import Optional, List
+import torch
 
 from mrna.core.config import MRNAPaths, config
-from mrna.substrate.backend import get_backend
-from mrna.router.interceptor import ActivationInterceptor
-from mrna.router.pooling import masked_mean_pool, get_unsloth_base_tokenizer
 from mrna.data.dataset_utils import extract_text2
+from mrna.router.interceptor import ActivationInterceptor
+from mrna.router.pooling import get_unsloth_base_tokenizer, masked_mean_pool
+from mrna.substrate.backend import get_backend
+
 
 def harvest_activations(
     concept: str,
@@ -21,36 +23,40 @@ def harvest_activations(
     save_every: int = 500,
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
     skip_if_exists: bool = True,
-    **kwargs
+    **kwargs,
 ):
     """
     Generalized activation harvester.
     Uses mrna.core.config to resolve defaults and mrna.substrate.backend for tensor operations.
     """
-    backend = get_backend("torch") # Default to torch for now
-    
+    backend = get_backend("torch")  # Default to torch for now
+
     # 1. Resolve parameters from config if not provided
     mid = model_id or config.current_model_id
     m_cfg = config.get_model_config(mid)
-    
+
     ds_id = dataset_id or config.science_triad_datasets.get(concept)
     if not ds_id:
-        raise ValueError(f"No dataset_id provided and concept '{concept}' not found in science triad.")
-        
+        raise ValueError(
+            f"No dataset_id provided and concept '{concept}' not found in science triad."
+        )
+
     # Load dataset
-    ds = datasets.load_dataset(ds_id, split=kwargs.get("split", "train"), streaming=True)
+    ds = datasets.load_dataset(
+        ds_id, split=kwargs.get("split", "train"), streaming=True
+    )
     target_layer = layer if layer is not None else m_cfg.get("harvest_layer")
     max_seq_len = kwargs.get("max_seq_len", 512)
     model_revision = m_cfg.get("revision")
-    
+
     # 2. Setup paths
     # Note: Using the new MRNAPaths logic
     activations_dir = MRNAPaths.DATA / mid / "activations" / f"layer_{target_layer}"
     activations_dir.mkdir(parents=True, exist_ok=True)
-    
+
     train_path = activations_dir / f"{concept}_train.pt"
     test_path = activations_dir / f"{concept}_test.pt"
-    
+
     # 3. Check for existing data
     if skip_if_exists and train_path.exists():
         prev = torch.load(train_path, map_location="cpu", weights_only=True)
@@ -61,13 +67,11 @@ def harvest_activations(
     # 4. Load Model (via Backend)
     print(f"Loading model {mid}...")
     model, tokenizer = backend.load_model(
-        mid, 
-        max_seq_length=max_seq_len, 
-        load_in_4bit=True,
-        revision=model_revision
+        mid, max_seq_length=max_seq_len, load_in_4bit=True, revision=model_revision
     )
     # FastLanguageModel specific optimizations (TODO: move to backend for true abstraction)
     from unsloth import FastLanguageModel
+
     FastLanguageModel.for_inference(model)
     model.eval()
 
@@ -77,8 +81,10 @@ def harvest_activations(
 
     # 6. Load Dataset
     print(f"Loading dataset {ds_id}...")
-    ds = datasets.load_dataset(ds_id, split=kwargs.get("split", "train"), streaming=True)
-    
+    ds = datasets.load_dataset(
+        ds_id, split=kwargs.get("split", "train"), streaming=True
+    )
+
     # 7. Harvest Loop (Simplified version of sandbox-scripts/harvest_hf.py)
     collected_train = []
     collected_test = []
@@ -86,7 +92,8 @@ def harvest_activations(
     fallback_cols = ["text", "instruction", "input", "question", "content", "prompt"]
 
     def _flush():
-        if not batch_texts: return
+        if not batch_texts:
+            return
         _tok = get_unsloth_base_tokenizer(tokenizer)
         enc = _tok(
             text=batch_texts,
@@ -95,10 +102,10 @@ def harvest_activations(
             truncation=True,
             max_length=max_seq_len,
         ).to(device)
-        
+
         with torch.no_grad():
             model(**enc)
-            
+
         for act in interceptor.intercepted_activations:
             pooled = masked_mean_pool(act, enc["attention_mask"].cpu())
             for i in range(len(pooled)):
@@ -106,10 +113,10 @@ def harvest_activations(
                     collected_test.append(pooled[i].unsqueeze(0))
                 else:
                     collected_train.append(pooled[i].unsqueeze(0))
-        
+
         interceptor.intercepted_activations.clear()
         batch_texts.clear()
-        
+
         # Incremental save
         if (len(collected_train) + len(collected_test)) % save_every < batch_size:
             _save_checkpoint()
@@ -126,10 +133,13 @@ def harvest_activations(
     for example in ds:
         if len(collected_train) + len(collected_test) >= max_examples:
             break
-            
-        text = extract_text2(example, kwargs.get("text_column", "message_1"), None, fallback_cols)
-        if not text.strip(): continue
-        
+
+        text = extract_text2(
+            example, kwargs.get("text_column", "message_1"), None, fallback_cols
+        )
+        if not text.strip():
+            continue
+
         batch_texts.append(text)
         if len(batch_texts) >= batch_size:
             _flush()
@@ -139,16 +149,24 @@ def harvest_activations(
     interceptor.detach()
     print(f"Done. Saved to {activations_dir}")
 
+
 def main():
     import argparse
+
     parser = argparse.ArgumentParser(description="mRNA Activation Harvester")
     parser.add_argument("--concept", required=True)
     parser.add_argument("--dataset", help="HF Dataset ID")
     parser.add_argument("--max-examples", type=int, default=5000)
     parser.add_argument("--layer", type=int)
     args = parser.parse_args()
-    
-    harvest_activations(concept=args.concept, dataset_id=args.dataset, max_examples=args.max_examples, layer=args.layer)
+
+    harvest_activations(
+        concept=args.concept,
+        dataset_id=args.dataset,
+        max_examples=args.max_examples,
+        layer=args.layer,
+    )
+
 
 if __name__ == "__main__":
     main()

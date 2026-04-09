@@ -51,11 +51,11 @@ class LlamaCppExecutionNode:
     def __init__(
         self,
         model_path: str,
-        adapter_registry: dict,           # {concept_name: path/to/adapter.gguf}
-        tokenizer=None,                   # Transformers tokenizer for chat template
+        adapter_registry: dict,  # {concept_name: path/to/adapter.gguf}
+        tokenizer=None,  # Transformers tokenizer for chat template
         host: str = "127.0.0.1",
         port: int = 8080,
-        n_gpu_layers: int = 99,           # 99 = full CUDA offload; 0 for CPU only
+        n_gpu_layers: int = 99,  # 99 = full CUDA offload; 0 for CPU only
         ctx_size: int = 2048,
         max_tokens: int = 128,
         startup_timeout: int = 120,
@@ -83,15 +83,22 @@ class LlamaCppExecutionNode:
     # Server lifecycle
     # ------------------------------------------------------------------
 
-    def _start_server(self, n_gpu_layers: int, ctx_size: int, startup_timeout: int) -> None:
+    def _start_server(
+        self, n_gpu_layers: int, ctx_size: int, startup_timeout: int
+    ) -> None:
         cmd = [
             LLAMA_SERVER_BIN,
-            "--model", self.model_path,
-            "--host", self.host,
-            "--port", str(self.port),
-            "--n-gpu-layers", str(n_gpu_layers),
-            "--ctx-size", str(ctx_size),
-            "--log-disable",          # suppress llama.cpp verbose to keep output clean
+            "--model",
+            self.model_path,
+            "--host",
+            self.host,
+            "--port",
+            str(self.port),
+            "--n-gpu-layers",
+            str(n_gpu_layers),
+            "--ctx-size",
+            str(ctx_size),
+            "--log-disable",  # suppress llama.cpp verbose to keep output clean
         ]
 
         # Pre-load every adapter at scale=0.  llama-server assigns IDs in
@@ -109,8 +116,10 @@ class LlamaCppExecutionNode:
         if not valid_adapters:
             print("[LlamaCppNode] No adapter GGUFs found — base model only.")
         else:
-            print(f"[LlamaCppNode] Pre-loading {len(valid_adapters)} adapter(s): "
-                  f"{list(valid_adapters.keys())}")
+            print(
+                f"[LlamaCppNode] Pre-loading {len(valid_adapters)} adapter(s): "
+                f"{list(valid_adapters.keys())}"
+            )
 
         print(f"[LlamaCppNode] Starting llama-server: {self.model_path}")
         print(f"[LlamaCppNode] n_gpu_layers={n_gpu_layers}  ctx={ctx_size}")
@@ -118,7 +127,7 @@ class LlamaCppExecutionNode:
         self._proc = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,   # capture for diagnostics on early exit
+            stderr=subprocess.PIPE,  # capture for diagnostics on early exit
         )
 
         # Wait until /health returns 200
@@ -136,8 +145,11 @@ class LlamaCppExecutionNode:
                 stderr_out = self._proc.stderr.read().decode(errors="replace").strip()
                 raise RuntimeError(
                     f"llama-server exited early (code {self._proc.returncode}).\n"
-                    + (f"  stderr: {stderr_out}" if stderr_out else
-                       f"  Check that {self.model_path} is valid.")
+                    + (
+                        f"  stderr: {stderr_out}"
+                        if stderr_out
+                        else f"  Check that {self.model_path} is valid."
+                    )
                 )
             time.sleep(1)
 
@@ -163,7 +175,9 @@ class LlamaCppExecutionNode:
         adapter_id is 1-indexed (matching legacy interface from StreamingExecutionNode).
         If adapter_path isn't in the registry the call falls back to the base model.
         """
-        print(f"\n[LlamaCppNode] SAE Router triggered adapter ID {adapter_id}: {adapter_path}")
+        print(
+            f"\n[LlamaCppNode] SAE Router triggered adapter ID {adapter_id}: {adapter_path}"
+        )
 
         # Determine which concept name maps to this gguf_path
         matched_name = None
@@ -174,12 +188,16 @@ class LlamaCppExecutionNode:
 
         if matched_name and matched_name in self._adapter_index:
             self._set_adapter_scales(active_name=matched_name)
-            print(f"[LlamaCppNode] Streaming .mrna via /lora-adapters (adapter: {matched_name})")
+            print(
+                f"[LlamaCppNode] Streaming .mrna via /lora-adapters (adapter: {matched_name})"
+            )
         else:
             if not os.path.isfile(adapter_path):
                 print(f"[LlamaCppNode] NOTE: '{adapter_path}' not found on disk.")
             else:
-                print(f"[LlamaCppNode] NOTE: Adapter not pre-loaded (wrong base model?).")
+                print(
+                    "[LlamaCppNode] NOTE: Adapter not pre-loaded (wrong base model?)."
+                )
             print("[LlamaCppNode] Falling back to base model inference.")
             self._set_adapter_scales(active_name=None)
 

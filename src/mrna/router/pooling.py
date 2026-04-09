@@ -1,16 +1,20 @@
 """
 Activation pooling mechanisms for intercepting transformer paths.
 """
+
 import torch
 
-def masked_mean_pool(activations: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+
+def masked_mean_pool(
+    activations: torch.Tensor, attention_mask: torch.Tensor
+) -> torch.Tensor:
     """
     Mean pool an activation tensor ignoring padding tokens based on the attention mask.
-    
+
     Args:
         activations: (batch, seq_len, d_model) tensor of hidden states
         attention_mask: (batch, seq_len) tensor of binary masks (1=real, 0=padding)
-        
+
     Returns:
         (batch, d_model) pooled tensor
     """
@@ -19,11 +23,12 @@ def masked_mean_pool(activations: torch.Tensor, attention_mask: torch.Tensor) ->
         mask = attention_mask.unsqueeze(-1).float()
     else:
         mask = attention_mask.float()
-        
+
     masked_sum = (activations * mask).sum(dim=1)
     lengths = mask.sum(dim=1).clamp(min=1)
     pooled = masked_sum / lengths
     return pooled
+
 
 def get_unsloth_base_tokenizer(tokenizer):
     """

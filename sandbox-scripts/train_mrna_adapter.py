@@ -39,9 +39,9 @@ import sys
 
 import torch
 from datasets import load_dataset
-from unsloth import FastLanguageModel, is_bfloat16_supported
-from trl import SFTTrainer
 from transformers import TrainingArguments
+from trl import SFTTrainer
+from unsloth import FastLanguageModel, is_bfloat16_supported
 
 # Liger-Kernel: fused Triton kernels for RMSNorm, SwiGLU, and FusedLinearCrossEntropy.
 # FusedLinearCE is the critical one — never materializes (batch × seq × 262144) logits,
@@ -49,6 +49,7 @@ from transformers import TrainingArguments
 # rope=False: Unsloth owns the RoPE path; let it handle that.
 try:
     from liger_kernel.transformers import apply_liger_kernel_to_gemma
+
     _LIGER_AVAILABLE = True
 except ImportError:
     _LIGER_AVAILABLE = False
@@ -56,10 +57,13 @@ except ImportError:
 
 try:
     from muon import MuonWithAuxAdam
+
     _MUON_AVAILABLE = True
 except ImportError:
     _MUON_AVAILABLE = False
-    print("[WARNING] Muon not installed. Run: pip install git+https://github.com/KellerJordan/Muon")
+    print(
+        "[WARNING] Muon not installed. Run: pip install git+https://github.com/KellerJordan/Muon"
+    )
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -88,7 +92,9 @@ ALPACA_PROMPT = """Below is an instruction that describes a task, paired with an
 {output}"""
 
 
-def make_formatter(dataset_id: str, tokenizer, text_column: str | None = None, split: str = "train"):
+def make_formatter(
+    dataset_id: str, tokenizer, text_column: str | None = None, split: str = "train"
+):
     """Return a batched formatting function appropriate for the dataset columns.
 
     text_column: if set, train on that single column (e.g. 'message_1' for
@@ -103,11 +109,14 @@ def make_formatter(dataset_id: str, tokenizer, text_column: str | None = None, s
         topics = examples.get("topic", [""] * len(examples["message_1"]))
         texts = []
         for topic, q, a in zip(topics, examples["message_1"], examples["message_2"]):
-            text = CHAT_PROMPT.format(
-                topic=topic or "biology",
-                question=q,
-                answer=a,
-            ) + tokenizer.eos_token
+            text = (
+                CHAT_PROMPT.format(
+                    topic=topic or "biology",
+                    question=q,
+                    answer=a,
+                )
+                + tokenizer.eos_token
+            )
             texts.append(text)
         return {"text": texts}
 
@@ -128,14 +137,16 @@ def make_formatter(dataset_id: str, tokenizer, text_column: str | None = None, s
 
     if text_column is not None:
         if text_column not in cols:
-            raise ValueError(f"--text-column {text_column!r} not found. Available: {cols}")
+            raise ValueError(
+                f"--text-column {text_column!r} not found. Available: {cols}"
+            )
         print(f"[Formatter] Single-column mode: '{text_column}'")
         return _single_column_format
     elif "message_1" in cols and "message_2" in cols:
-        print(f"[Formatter] Detected chat format (message_1 / message_2)")
+        print("[Formatter] Detected chat format (message_1 / message_2)")
         return _chat_format
     elif "instruction" in cols:
-        print(f"[Formatter] Detected alpaca format (instruction / input / output)")
+        print("[Formatter] Detected alpaca format (instruction / input / output)")
         return _alpaca_format
     else:
         raise ValueError(
@@ -147,6 +158,7 @@ def make_formatter(dataset_id: str, tokenizer, text_column: str | None = None, s
 # ---------------------------------------------------------------------------
 # Gemma 4 LoRA compatibility
 # ---------------------------------------------------------------------------
+
 
 def _unwrap_clippable(model, target_module_names: list[str]) -> None:
     """Replace Gemma4ClippableLinear wrappers with their inner nn.Linear.
@@ -184,13 +196,16 @@ def _unwrap_clippable(model, target_module_names: list[str]) -> None:
             parent = getattr(parent, part)
         setattr(parent, parts[-1], module.linear)
 
-    print(f"[LoRA compat] Unwrapped {len(candidates)} Gemma4ClippableLinear "
-          f"module(s) → nn.Linear for PEFT compatibility.")
+    print(
+        f"[LoRA compat] Unwrapped {len(candidates)} Gemma4ClippableLinear "
+        f"module(s) → nn.Linear for PEFT compatibility."
+    )
 
 
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
+
 
 def train(
     dataset_id: str,
@@ -217,16 +232,23 @@ def train(
     # ------------------------------------------------------------------
     if _LIGER_AVAILABLE:
         apply_liger_kernel_to_gemma(
-            rope=False,                      # Unsloth owns RoPE — no double-patch
+            rope=False,  # Unsloth owns RoPE — no double-patch
             rms_norm=True,
-            cross_entropy=False,             # replaced by fused_linear_cross_entropy
-            fused_linear_cross_entropy=True, # never materializes (batch×seq×262144) tensor
+            cross_entropy=False,  # replaced by fused_linear_cross_entropy
+            fused_linear_cross_entropy=True,  # never materializes (batch×seq×262144) tensor
         )
-        print("[Substrate] Liger-Kernel patches applied (FusedLinearCE + RMSNorm + SwiGLU)")
+        print(
+            "[Substrate] Liger-Kernel patches applied (FusedLinearCE + RMSNorm + SwiGLU)"
+        )
 
     rev_label = f" @ {model_revision[:8]}" if model_revision else ""
     print(f"\nLoading base model {model_id!r}{rev_label}...")
-    load_kwargs = dict(model_name=model_id, max_seq_length=max_seq_length, dtype=None, load_in_4bit=True)
+    load_kwargs = dict(
+        model_name=model_id,
+        max_seq_length=max_seq_length,
+        dtype=None,
+        load_in_4bit=True,
+    )
     if model_revision:
         load_kwargs["revision"] = model_revision
     model, tokenizer = FastLanguageModel.from_pretrained(**load_kwargs)
@@ -253,9 +275,9 @@ def train(
     model = FastLanguageModel.get_peft_model(
         model,
         r=rank,
-        target_modules=["q_proj", "v_proj"],   # minimal target set for streaming
-        lora_alpha=rank,                        # scale = alpha/rank = 1.0
-        lora_dropout=0,                         # required for Unsloth Triton kernels
+        target_modules=["q_proj", "v_proj"],  # minimal target set for streaming
+        lora_alpha=rank,  # scale = alpha/rank = 1.0
+        lora_dropout=0,  # required for Unsloth Triton kernels
         bias="none",
         use_gradient_checkpointing="unsloth",
         random_state=3407,
@@ -267,12 +289,17 @@ def train(
     # 3. Load and format dataset
     # ------------------------------------------------------------------
     print(f"\nLoading dataset {dataset_id!r}...")
-    formatter = make_formatter(dataset_id, tokenizer, text_column=text_column, split=split)
-    from tqdm import tqdm
+    formatter = make_formatter(
+        dataset_id, tokenizer, text_column=text_column, split=split
+    )
     from datasets import Dataset as HFDataset
+    from tqdm import tqdm
+
     ds_stream = load_dataset(dataset_id, split=split, streaming=True)
     cap = max_examples or 50_000
-    rows = list(tqdm(ds_stream.take(cap), total=cap, desc="Streaming dataset", unit="ex"))
+    rows = list(
+        tqdm(ds_stream.take(cap), total=cap, desc="Streaming dataset", unit="ex")
+    )
     dataset = HFDataset.from_list(rows)
     print(f"Dataset: {len(dataset)} examples loaded")
 
@@ -284,7 +311,9 @@ def train(
         texts = formatter(batch)["text"]
         out = []
         for t in texts:
-            ids = _tok(text=t, truncation=True, max_length=max_seq_length - 1)["input_ids"]
+            ids = _tok(text=t, truncation=True, max_length=max_seq_length - 1)[
+                "input_ids"
+            ]
             out.append(_tok.decode(ids, skip_special_tokens=False))
         return {"text": out}
 
@@ -296,25 +325,44 @@ def train(
     # ------------------------------------------------------------------
     effective_batch = batch_size * grad_accum
     print(f"\nTraining .mrna adapter for concept '{concept}'")
-    print(f"  steps={max_steps}  batch={batch_size}×{grad_accum}={effective_batch}  lr={learning_rate}")
+    print(
+        f"  steps={max_steps}  batch={batch_size}×{grad_accum}={effective_batch}  lr={learning_rate}"
+    )
     print(f"  packing={packing}\n")
 
     # Muon optimizer: LoRA A/B matrices are ndim=2 non-embedding weights — exactly the
     # case where orthogonality pressure helps most. ~30% fewer steps to same val loss.
     # Falls back to adamw_8bit if Muon isn't installed.
     if _MUON_AVAILABLE:
-        hidden = [p for n, p in model.named_parameters()
-                  if p.requires_grad and p.ndim >= 2
-                  and "embed" not in n and "lm_head" not in n]
-        other  = [p for n, p in model.named_parameters()
-                  if p.requires_grad and not (p.ndim >= 2
-                  and "embed" not in n and "lm_head" not in n)]
-        muon_optimizer = MuonWithAuxAdam([
-            dict(params=hidden, use_muon=True,  lr=0.02,         weight_decay=0.01),
-            dict(params=other,  use_muon=False, lr=learning_rate, betas=(0.9, 0.95),
-                 weight_decay=0.01),
-        ])
-        print(f"[Substrate] Muon optimizer: {len(hidden)} hidden matrices, {len(other)} other params")
+        hidden = [
+            p
+            for n, p in model.named_parameters()
+            if p.requires_grad
+            and p.ndim >= 2
+            and "embed" not in n
+            and "lm_head" not in n
+        ]
+        other = [
+            p
+            for n, p in model.named_parameters()
+            if p.requires_grad
+            and not (p.ndim >= 2 and "embed" not in n and "lm_head" not in n)
+        ]
+        muon_optimizer = MuonWithAuxAdam(
+            [
+                dict(params=hidden, use_muon=True, lr=0.02, weight_decay=0.01),
+                dict(
+                    params=other,
+                    use_muon=False,
+                    lr=learning_rate,
+                    betas=(0.9, 0.95),
+                    weight_decay=0.01,
+                ),
+            ]
+        )
+        print(
+            f"[Substrate] Muon optimizer: {len(hidden)} hidden matrices, {len(other)} other params"
+        )
         optimizers = (muon_optimizer, None)
         optim_arg = "adamw_8bit"  # ignored when optimizers= is set, but required by TrainingArguments
     else:
@@ -348,7 +396,7 @@ def train(
     )
 
     trainer_stats = trainer.train()
-    print(f"\nTraining complete.")
+    print("\nTraining complete.")
     print(f"  Runtime : {trainer_stats.metrics['train_runtime']:.1f}s")
     print(f"  Loss    : {trainer_stats.metrics['train_loss']:.4f}")
 
@@ -360,10 +408,13 @@ def train(
     model.save_pretrained(adapter_path)
     tokenizer.save_pretrained(adapter_path)
 
-    adapter_size_mb = sum(
-        os.path.getsize(os.path.join(adapter_path, f))
-        for f in os.listdir(adapter_path)
-    ) / 1e6
+    adapter_size_mb = (
+        sum(
+            os.path.getsize(os.path.join(adapter_path, f))
+            for f in os.listdir(adapter_path)
+        )
+        / 1e6
+    )
     print(f"Adapter size: {adapter_size_mb:.1f} MB  (streaming viable at PCIe Gen4)")
 
     print(f"""
@@ -383,39 +434,78 @@ def train(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Train a .mrna LoRA adapter on a domain-specific dataset.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--dataset",      default="camel-ai/biology")
-    parser.add_argument("--concept",      default="biology",
-                        help="Concept name — sets output dir: adapters/<concept>_lora")
-    parser.add_argument("--model-id",     default="unsloth/gemma-4-E2B-it")
-    parser.add_argument("--model-revision", default="37ea165b3fba25b7d851f8ce4ccff9a4f0751cee",
-                        help="HF commit hash to pin (prevents silent weight updates).")
-    parser.add_argument("--max-seq-len",  type=int, default=128,
-                        help="128 required for Gemma 4 E2B (vocab=262,144 causes fused CE OOM at seq>128 on 12GB VRAM).")
-    parser.add_argument("--rank",         type=int, default=16)
-    parser.add_argument("--max-steps",    type=int, default=200,
-                        help="200 steps ≈ 5-10 min on 4070 Super. "
-                             "Use 500+ for a more polished adapter.")
-    parser.add_argument("--batch-size",   type=int, default=1,
-                        help="Reduced to 1 from 2 to preserve VRAM during training")
-    parser.add_argument("--grad-accum",   type=int, default=8,
-                        help="Increased to 8 to maintain effective batch size of 8")
-    parser.add_argument("--lr",           type=float, default=2e-4)
-    parser.add_argument("--output-dir",   default="data/gemma-4-e2b/adapters",)
-    parser.add_argument("--packing",      action="store_true",
-                        help="Enable sequence packing (disabled by default — pre-truncation handles length).")
-    parser.add_argument("--text-column",  default=None,
-                        help="Train on a single column (e.g. 'message_1') instead of full Q+A. "
-                             "Halves sequence length for OOM-prone datasets.")
-    parser.add_argument("--max-examples", type=int, default=None,
-                        help="Cap dataset rows via streaming take(). Essential for script-generated "
-                             "HF datasets like camel-ai/math that would otherwise download all 50k rows.")
-    parser.add_argument("--split", default="train",
-                        help="Dataset split to use. Some datasets (e.g. HuggingFaceH4/MATH-500) only have 'test'.")
+    parser.add_argument("--dataset", default="camel-ai/biology")
+    parser.add_argument(
+        "--concept",
+        default="biology",
+        help="Concept name — sets output dir: adapters/<concept>_lora",
+    )
+    parser.add_argument("--model-id", default="unsloth/gemma-4-E2B-it")
+    parser.add_argument(
+        "--model-revision",
+        default="37ea165b3fba25b7d851f8ce4ccff9a4f0751cee",
+        help="HF commit hash to pin (prevents silent weight updates).",
+    )
+    parser.add_argument(
+        "--max-seq-len",
+        type=int,
+        default=128,
+        help="128 required for Gemma 4 E2B (vocab=262,144 causes fused CE OOM at seq>128 on 12GB VRAM).",
+    )
+    parser.add_argument("--rank", type=int, default=16)
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=200,
+        help="200 steps ≈ 5-10 min on 4070 Super. "
+        "Use 500+ for a more polished adapter.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=1,
+        help="Reduced to 1 from 2 to preserve VRAM during training",
+    )
+    parser.add_argument(
+        "--grad-accum",
+        type=int,
+        default=8,
+        help="Increased to 8 to maintain effective batch size of 8",
+    )
+    parser.add_argument("--lr", type=float, default=2e-4)
+    parser.add_argument(
+        "--output-dir",
+        default="data/gemma-4-e2b/adapters",
+    )
+    parser.add_argument(
+        "--packing",
+        action="store_true",
+        help="Enable sequence packing (disabled by default — pre-truncation handles length).",
+    )
+    parser.add_argument(
+        "--text-column",
+        default=None,
+        help="Train on a single column (e.g. 'message_1') instead of full Q+A. "
+        "Halves sequence length for OOM-prone datasets.",
+    )
+    parser.add_argument(
+        "--max-examples",
+        type=int,
+        default=None,
+        help="Cap dataset rows via streaming take(). Essential for script-generated "
+        "HF datasets like camel-ai/math that would otherwise download all 50k rows.",
+    )
+    parser.add_argument(
+        "--split",
+        default="train",
+        help="Dataset split to use. Some datasets (e.g. HuggingFaceH4/MATH-500) only have 'test'.",
+    )
 
     args = parser.parse_args()
 

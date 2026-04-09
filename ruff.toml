@@ -8,8 +8,16 @@ line-length = 88
 # Enable Pyflakes (F), pycodestyle (E, W), and Bandit (S)
 select = ["F", "E", "W", "S", "I"]
 ignore = [
-    "F401", # Unused imports (flexible for research)
+    "F401", # Unused imports
     "F841", # Unused local variables
+    "E501", # Line too long
+    "S101", # Use of assert
+    "S105", # Possible hardcoded password
+    "E731", # Do not assign a lambda expression
+    "S311", # Standard pseudo-random generators (noisy for research)
+    "S603", # subprocess call with untrusted input (noisy for research)
+    "S104", # Bind to all interfaces (0.0.0.0) (common in dev/docker)
+    "E402", # Module level import not at top (common for lazy loading)
 ]
 
 # Allow fix for all enabled rules (when `--fix`)
@@ -26,6 +34,7 @@ exclude = [
     "data",
     "models",
     "adapters",
+    "sandbox-scripts",
 ]
 
 [lint.per-file-ignores]

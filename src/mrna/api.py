@@ -40,10 +40,10 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from src.mrna.router.sae import CBSAE
-from src.mrna.router.interceptor import ActivationInterceptor
-from mrna.core.config import config, MRNAPaths
+from mrna.core.config import MRNAPaths, config
 from src.mrna.execution.llama_cpp_node import LlamaCppExecutionNode
+from src.mrna.router.interceptor import ActivationInterceptor
+from src.mrna.router.sae import CBSAE
 
 # ---------------------------------------------------------------------------
 # Configuration (Dynamic from model_config.yaml)
@@ -52,14 +52,14 @@ from src.mrna.execution.llama_cpp_node import LlamaCppExecutionNode
 m_id = config.current_model_id
 m_cfg = config.get_model_config(m_id)
 
-MODEL_ID       = m_cfg["path"]
+MODEL_ID = m_cfg["path"]
 MODEL_REVISION = m_cfg.get("revision")
-MODEL_PATH     = str(MRNAPaths.ROOT / m_cfg.get("gguf_path", f"models/{m_id}.gguf"))
-LAYER          = m_cfg.get("harvest_layer", 0)
-D_MODEL        = m_cfg.get("d_model", 2048)
-SAE_WEIGHTS    = str(MRNAPaths.DATA / m_id / "sae_weights.pt")
+MODEL_PATH = str(MRNAPaths.ROOT / m_cfg.get("gguf_path", f"models/{m_id}.gguf"))
+LAYER = m_cfg.get("harvest_layer", 0)
+D_MODEL = m_cfg.get("d_model", 2048)
+SAE_WEIGHTS = str(MRNAPaths.DATA / m_id / "sae_weights.pt")
 
-PORT           = int(os.getenv("MRNA_PORT", "7437"))
+PORT = int(os.getenv("MRNA_PORT", "7437"))
 
 CONCEPT_NAMES = list(config.science_triad_datasets.keys())
 
@@ -85,7 +85,9 @@ class _PrefillRouter:
         import torch
         from unsloth import FastLanguageModel
 
-        print(f"[mRNA API] Loading {MODEL_ID!r} @ {MODEL_REVISION[:8]} for prefill routing …")
+        print(
+            f"[mRNA API] Loading {MODEL_ID!r} @ {MODEL_REVISION[:8]} for prefill routing …"
+        )
         self.model, self.tokenizer = FastLanguageModel.from_pretrained(
             model_name=MODEL_ID,
             revision=MODEL_REVISION,
@@ -99,13 +101,20 @@ class _PrefillRouter:
         self.interceptor = ActivationInterceptor(target_layer=LAYER)
         self.interceptor.attach_to_model(self.model)
 
-        self.sae = CBSAE(d_model=D_MODEL, expansion_factor=8, bottleneck_features=len(CONCEPT_NAMES))
+        self.sae = CBSAE(
+            d_model=D_MODEL, expansion_factor=8, bottleneck_features=len(CONCEPT_NAMES)
+        )
         import torch as _torch
+
         if os.path.exists(SAE_WEIGHTS):
-            self.sae.load_state_dict(_torch.load(SAE_WEIGHTS, map_location="cpu", weights_only=True))
+            self.sae.load_state_dict(
+                _torch.load(SAE_WEIGHTS, map_location="cpu", weights_only=True)
+            )
             print(f"[mRNA API] SAE weights loaded from {SAE_WEIGHTS}")
         else:
-            print(f"[mRNA API] WARNING: SAE weights not found at {SAE_WEIGHTS} — routing will be random")
+            print(
+                f"[mRNA API] WARNING: SAE weights not found at {SAE_WEIGHTS} — routing will be random"
+            )
         self.sae.eval()
 
     def route(self, prompt: str) -> dict:
@@ -123,23 +132,23 @@ class _PrefillRouter:
         with torch.no_grad():
             self.model(**enc)
 
-        acts = self.interceptor.intercepted_activations[-1]   # (1, seq, d_model)
+        acts = self.interceptor.intercepted_activations[-1]  # (1, seq, d_model)
         self.interceptor.intercepted_activations.clear()
 
-        mask    = enc["attention_mask"].cpu().unsqueeze(-1).float()
-        pooled  = ((acts * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)).float()
+        mask = enc["attention_mask"].cpu().unsqueeze(-1).float()
+        pooled = ((acts * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)).float()
         pre_relu = self.sae.encoder(pooled)
-        bottleneck = pre_relu[:, :len(CONCEPT_NAMES)]
+        bottleneck = pre_relu[:, : len(CONCEPT_NAMES)]
         strengths = bottleneck[0]
 
         concept_idx = int(strengths.argmax().item())
         scores = {n: float(strengths[i].item()) for i, n in enumerate(CONCEPT_NAMES)}
         return {
-            "concept":      CONCEPT_NAMES[concept_idx],
-            "concept_idx":  concept_idx,
-            "confidence":   scores[CONCEPT_NAMES[concept_idx]],
-            "scores":       scores,
-            "latency_ms":   (time.perf_counter() - t0) * 1000,
+            "concept": CONCEPT_NAMES[concept_idx],
+            "concept_idx": concept_idx,
+            "confidence": scores[CONCEPT_NAMES[concept_idx]],
+            "scores": scores,
+            "latency_ms": (time.perf_counter() - t0) * 1000,
         }
 
 
@@ -182,17 +191,21 @@ async def _startup():
 # Request / response models
 # ---------------------------------------------------------------------------
 
+
 class RouteRequest(BaseModel):
     prompt: str
 
+
 class GenerateRequest(BaseModel):
     prompt: str
-    force_adapter: Optional[str] = None   # "biology" | "chemistry" | "physics"
+    force_adapter: Optional[str] = None  # "biology" | "chemistry" | "physics"
     max_tokens: int = 2048
+
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
 
 @app.get("/health")
 def health():
@@ -229,12 +242,12 @@ async def generate(req: GenerateRequest):
             concept = req.force_adapter
             adapter_path = GGUF_ADAPTER_REGISTRY[concept]
             route_info = {
-                "concept":     concept,
+                "concept": concept,
                 "concept_idx": CONCEPT_NAMES.index(concept),
-                "confidence":  1.0,
-                "scores":      {c: (1.0 if c == concept else 0.0) for c in CONCEPT_NAMES},
-                "latency_ms":  0.0,
-                "forced":      True,
+                "confidence": 1.0,
+                "scores": {c: (1.0 if c == concept else 0.0) for c in CONCEPT_NAMES},
+                "latency_ms": 0.0,
+                "forced": True,
             }
         else:
             route_info = await loop.run_in_executor(None, _router.route, req.prompt)
@@ -253,12 +266,13 @@ async def generate(req: GenerateRequest):
             formatted = _execution._apply_chat_template(req.prompt)
 
             import requests as _req
+
             payload = {
-                "prompt":       formatted,
-                "n_predict":    req.max_tokens,
-                "temperature":  0.7,
-                "min_p":        0.05,
-                "stream":       True,
+                "prompt": formatted,
+                "n_predict": req.max_tokens,
+                "temperature": 0.7,
+                "min_p": 0.05,
+                "stream": True,
                 "cache_prompt": False,
             }
             full_text = ""
@@ -275,7 +289,11 @@ async def generate(req: GenerateRequest):
                 for raw_line in r.iter_lines():
                     if not raw_line:
                         continue
-                    line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else raw_line
+                    line = (
+                        raw_line.decode("utf-8")
+                        if isinstance(raw_line, bytes)
+                        else raw_line
+                    )
                     if line.startswith("data: "):
                         line = line[6:]
                     try:
@@ -289,10 +307,10 @@ async def generate(req: GenerateRequest):
                         timings = chunk.get("timings", {})
                         tok_per_sec = round(timings.get("predicted_per_second", 0.0), 1)
             return {
-                "text":             full_text,
+                "text": full_text,
                 "tokens_predicted": tokens_predicted,
                 "tokens_evaluated": tokens_evaluated,
-                "tok_per_sec":      tok_per_sec,
+                "tok_per_sec": tok_per_sec,
             }
 
         # Stream tokens: we collect in a thread and emit word-by-word for now
@@ -311,14 +329,18 @@ async def generate(req: GenerateRequest):
             yield f"event: token\ndata: {json.dumps(token)}\n\n"
 
         total_ms = (time.perf_counter() - t_start) * 1000
-        yield f"event: done\ndata: {json.dumps({
-            'concept':           concept,
-            'generated_by':      f'{m_id}-mrna',
-            'total_ms':          round(total_ms),
-            'tokens_generated':  generated['tokens_predicted'],
-            'tokens_prompt':     generated['tokens_evaluated'],
-            'tok_per_sec':       generated['tok_per_sec'],
-        })}\n\n"
+        yield f"event: done\ndata: {
+            json.dumps(
+                {
+                    'concept': concept,
+                    'generated_by': f'{m_id}-mrna',
+                    'total_ms': round(total_ms),
+                    'tokens_generated': generated['tokens_predicted'],
+                    'tokens_prompt': generated['tokens_evaluated'],
+                    'tok_per_sec': generated['tok_per_sec'],
+                }
+            )
+        }\n\n"
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
@@ -328,4 +350,6 @@ async def generate(req: GenerateRequest):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    uvicorn.run("src.mrna.api:app", host="0.0.0.0", port=PORT, reload=False, log_level="info")
+    uvicorn.run(
+        "src.mrna.api:app", host="0.0.0.0", port=PORT, reload=False, log_level="info"
+    )

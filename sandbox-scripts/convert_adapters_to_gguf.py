@@ -42,7 +42,9 @@ CONVERT_SCRIPT = os.path.join(LLAMA_CPP_DIR, "convert_lora_to_gguf.py")
 
 VENV_PYTHON = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    ".venv", "bin", "python",
+    ".venv",
+    "bin",
+    "python",
 )
 
 
@@ -58,7 +60,9 @@ def resolve_base_model(base_model: str) -> str:
 
     if os.path.isfile(base_model):
         print(f"[ERROR] --base-model is a file, not a directory: {base_model}")
-        print("  convert_lora_to_gguf.py needs the HF model directory with config.json,")
+        print(
+            "  convert_lora_to_gguf.py needs the HF model directory with config.json,"
+        )
         print("  not the .gguf file.  Pass a model ID (e.g. unsloth/gemma-4-E2B-it)")
         print("  or the local snapshot directory.")
         sys.exit(1)
@@ -67,12 +71,15 @@ def resolve_base_model(base_model: str) -> str:
     print(f"[Resolve] Locating local snapshot for '{base_model}' ...")
     try:
         from huggingface_hub import snapshot_download
+
         path = snapshot_download(base_model, local_files_only=True)
         print(f"[Resolve] Found: {path}")
         return path
     except Exception as e:
         print(f"[ERROR] Could not resolve '{base_model}': {e}")
-        print("  Make sure the model is cached locally (run harvest or training first).")
+        print(
+            "  Make sure the model is cached locally (run harvest or training first)."
+        )
         sys.exit(1)
 
 
@@ -80,7 +87,9 @@ def convert_one(base_model: str, adapter_dir: str, outfile: str) -> bool:
     if not os.path.isfile(CONVERT_SCRIPT):
         print(f"[ERROR] convert_lora_to_gguf.py not found at {CONVERT_SCRIPT}")
         print("  Clone llama.cpp to ~/llama.cpp first:")
-        print("  git clone https://github.com/ggerganov/llama.cpp ~/llama.cpp --depth=1")
+        print(
+            "  git clone https://github.com/ggerganov/llama.cpp ~/llama.cpp --depth=1"
+        )
         return False
 
     if not os.path.isdir(adapter_dir):
@@ -95,9 +104,11 @@ def convert_one(base_model: str, adapter_dir: str, outfile: str) -> bool:
     cmd = [
         VENV_PYTHON,
         CONVERT_SCRIPT,
-        "--base", base_model,
+        "--base",
+        base_model,
         adapter_dir,
-        "--outfile", outfile,
+        "--outfile",
+        outfile,
     ]
     env = os.environ.copy()
     env["PYTHONPATH"] = LLAMA_CPP_DIR
@@ -121,7 +132,7 @@ def main():
         "--base-model",
         default="unsloth/gemma-4-E2B-it",
         help="HF model ID or local snapshot directory with config.json. "
-             "NOT the .gguf file — convert_lora_to_gguf.py reads config.json.",
+        "NOT the .gguf file — convert_lora_to_gguf.py reads config.json.",
     )
     parser.add_argument(
         "--adapters",
@@ -153,7 +164,8 @@ def main():
         # Single adapter mode
         outfile = args.out or os.path.join(
             args.adapter_dir,
-            os.path.basename(args.adapter_dir.rstrip("/")).replace("_lora", "") + ".gguf",
+            os.path.basename(args.adapter_dir.rstrip("/")).replace("_lora", "")
+            + ".gguf",
         )
         ok = convert_one(base_model, args.adapter_dir, outfile)
         sys.exit(0 if ok else 1)
