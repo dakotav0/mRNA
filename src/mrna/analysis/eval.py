@@ -82,7 +82,14 @@ def evaluate_sae_holdouts(
         
     return overall_results
 
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="mRNA SAE Holdout Evaluator")
+    parser.add_argument("--concepts", required=True, help="Comma-sep concepts")
+    args = parser.parse_args()
+    
+    results = evaluate_sae_holdouts(concepts=args.concepts.split(","))
+    print(results)
+
 if __name__ == "__main__":
-    # Example usage
-    # print(evaluate_sae_holdouts(["biology", "chemistry", "physics"]))
-    pass
+    main()

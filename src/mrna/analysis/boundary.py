@@ -91,7 +91,15 @@ def analyze_dataset_boundary(
     
     return report
 
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="mRNA Dataset Boundary Analyzer")
+    parser.add_argument("--dataset", required=True)
+    parser.add_argument("--concepts", required=True, help="Comma-sep concepts")
+    args = parser.parse_args()
+    
+    report = analyze_dataset_boundary(dataset_id=args.dataset, concepts=args.concepts.split(","))
+    print(report)
+
 if __name__ == "__main__":
-    # Example usage
-    # print(analyze_dataset_boundary("camel-ai/math", ["biology", "chemistry", "physics"]))
-    pass
+    main()

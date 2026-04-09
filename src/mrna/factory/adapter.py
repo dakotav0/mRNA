@@ -141,7 +141,14 @@ def train_adapter(
     print(f"Adapter saved to {output_dir}")
     return output_dir
 
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="mRNA Adapter Trainer")
+    parser.add_argument("--concept", required=True)
+    parser.add_argument("--steps", type=int, default=200)
+    args = parser.parse_args()
+    
+    train_adapter(concept=args.concept, max_steps=args.steps)
+
 if __name__ == "__main__":
-    # Test stub
-    # train_adapter(concept="biology", max_steps=5)
-    pass
+    main()

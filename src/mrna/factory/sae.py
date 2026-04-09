@@ -101,6 +101,19 @@ def train_sae_weights(
     print(f"SAE weights saved to {save_path}")
     return save_path
 
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="mRNA SAE Weight Trainer")
+    parser.add_argument("--concepts", required=True, help="Comma-separated concepts")
+    parser.add_argument("--files", required=True, help="Comma-separated activation files")
+    parser.add_argument("--epochs", type=int, default=50)
+    args = parser.parse_args()
+    
+    train_sae_weights(
+        concepts=args.concepts.split(","),
+        activation_files=args.files.split(","),
+        epochs=args.epochs
+    )
+
 if __name__ == "__main__":
-    # Test/CLI stub
-    pass
+    main()

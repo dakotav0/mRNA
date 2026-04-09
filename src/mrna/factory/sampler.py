@@ -137,6 +137,16 @@ def harvest_activations(
     interceptor.detach()
     print(f"Done. Saved to {activations_dir}")
 
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="mRNA Activation Harvester")
+    parser.add_argument("--concept", required=True)
+    parser.add_argument("--dataset", help="HF Dataset ID")
+    parser.add_argument("--max-examples", type=int, default=5000)
+    parser.add_argument("--layer", type=int)
+    args = parser.parse_args()
+    
+    harvest_activations(concept=args.concept, dataset_id=args.dataset, max_examples=args.max_examples, layer=args.layer)
+
 if __name__ == "__main__":
-    # Internal test/CLI entry point
-    harvest_activations(concept="biology", max_examples=10)
+    main()
