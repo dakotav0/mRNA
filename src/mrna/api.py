@@ -319,7 +319,8 @@ async def generate(req: GenerateRequest):
         try:
             generated = await loop.run_in_executor(None, _generate_sync)
         except Exception as exc:
-            yield f"event: error\ndata: {json.dumps(str(exc))}\n\n"
+            print(f"[mrna.api] generation failed: {exc}", file=sys.stderr)
+            yield f"event: error\ndata: {json.dumps('An internal error has occurred.')}\n\n"
             return
 
         # Emit the full text as tokens split on spaces (preserve streaming feel)
