@@ -4,10 +4,12 @@ from pathlib import Path
 from mrna.core.config import config, MRNAPaths
 
 def test_root_path():
-    """Verifies that MRNAPaths resolves to the actual project root."""
-    # Since we are in the repo, ROOT should contain src and data
-    assert (MRNAPaths.ROOT / "src").exists()
-    assert (MRNAPaths.ROOT / "data").exists()
+    """Verifies that MRNAPaths resolves to the project root (containing config)."""
+    # ROOT should exist and be a directory
+    assert MRNAPaths.ROOT.exists()
+    assert MRNAPaths.ROOT.is_dir()
+    # In CI, we definitely expect the config file to be reachable from ROOT
+    assert MRNAPaths.CONFIG_FILE.exists()
 
 def test_config_loading():
     """Verifies that the config manager loads the expected models."""

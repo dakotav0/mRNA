@@ -95,7 +95,12 @@ def train_sae_weights(
             print(f"Epoch {epoch} complete.")
 
     # 5. Save
-    save_path = output_path or str(MRNAPaths.DATA / config.current_model_id / "sae_weights.pt")
+    mid = config.current_model_id
+    if not mid:
+        # Fallback for tests or manual runs where config isn't loaded
+        mid = "unknown_model"
+        
+    save_path = output_path or str(MRNAPaths.DATA / mid / "sae_weights.pt")
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     torch.save(model.state_dict(), save_path)
     print(f"SAE weights saved to {save_path}")

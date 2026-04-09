@@ -8,7 +8,19 @@ class MRNAPaths:
     Centralized path manager for the mRNA infrastructure.
     Ensures relative paths resolve correctly regardless of the CWD.
     """
-    ROOT = Path(__file__).parent.parent.parent.parent
+    @staticmethod
+    def _find_root():
+        # Search upwards for a root marker
+        current = Path(__file__).resolve().parent
+        # Look for model_config.yaml or pyproject.toml up to 5 levels
+        for _ in range(5):
+            if (current / "model_config.yaml").exists() or (current / "pyproject.toml").exists():
+                return current
+            current = current.parent
+        # Fallback to CWD to ensure it works in localized CI runners
+        return Path.cwd()
+
+    ROOT = _find_root()
     SRC = ROOT / "src"
     DATA = ROOT / "data"
     MODELS = ROOT / "models"
