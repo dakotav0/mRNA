@@ -353,7 +353,7 @@ def main():
     parser.add_argument("--layer", type=int, default=25)
     parser.add_argument(
         "--sae-weights",
-        default="data/gemma-4-e2b/sae/w_25.pt",
+        default="data/gemma-4-e2b/sae_weights_L25.pt",
         help="Path to trained CBSAE state_dict (.pt). "
         "Omit or set to None to run structural test with random-init SAE.",
     )

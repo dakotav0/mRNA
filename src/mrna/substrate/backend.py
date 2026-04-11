@@ -27,13 +27,45 @@ class TorchBackend(Backend):
     """PyTorch implementation using Unsloth/HF."""
 
     def load_model(self, model_id: str, **kwargs) -> Any:
-        # Avoid circular imports by importing inside method if needed
-        from unsloth import FastLanguageModel
+        """Loads a model using either Unsloth or standard Hugging Face backends."""
+        use_unsloth = kwargs.pop("use_unsloth", True)
 
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=model_id, **kwargs
-        )
-        return model, tokenizer
+        if use_unsloth:
+            from unsloth import FastLanguageModel
+
+            model, tokenizer = FastLanguageModel.from_pretrained(
+                model_name=model_id, **kwargs
+            )
+            return model, tokenizer
+        else:
+            # Standard HF Fallback: Bypasses Triton kernels entirely
+            from transformers import (
+                AutoModelForCausalLM,
+                AutoTokenizer,
+                BitsAndBytesConfig,
+            )
+
+            print("[Backend] Using standard Transformers backend (Triton disabled)")
+
+            bnb_config = None
+            if kwargs.get("load_in_4bit"):
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16
+                    if torch.cuda.is_bf16_supported()
+                    else torch.float16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                )
+
+            tokenizer = AutoTokenizer.from_pretrained(model_id)
+            model = AutoModelForCausalLM.from_pretrained(
+                model_id,
+                quantization_config=bnb_config,
+                device_map="auto",
+                trust_remote_code=True,
+            )
+            return model, tokenizer
 
     def to_device(self, tensor: torch.Tensor, device: str) -> torch.Tensor:
         return tensor.to(device)

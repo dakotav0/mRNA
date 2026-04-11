@@ -57,7 +57,7 @@ class LlamaCppExecutionNode:
         port: int = 8080,
         n_gpu_layers: int = 99,  # 99 = full CUDA offload; 0 for CPU only
         ctx_size: int = 2048,
-        max_tokens: int = 128,
+        max_tokens: int = 512,
         startup_timeout: int = 120,
     ):
         self.model_path = model_path
@@ -210,6 +210,7 @@ class LlamaCppExecutionNode:
             "n_predict": self.max_tokens,
             "temperature": 0.7,
             "min_p": 0.05,
+            "stop": ["<|im_end|>", "<|im_start|>", "<|endoftext|>"],
             "stream": False,
             "cache_prompt": False,
         }
@@ -224,14 +225,20 @@ class LlamaCppExecutionNode:
         except requests.exceptions.RequestException as e:
             print(f"[LlamaCppNode] /completion request failed: {e}\n")
 
-    def _set_adapter_scales(self, active_name: Optional[str]) -> None:
-        """POST /lora-adapters to activate one adapter and disable the rest."""
+    def _set_adapter_scales(self, active_adapters: dict[str, float]) -> None:
+        """
+        POST /lora-adapters to update scales for multiple adapters simultaneously.
+
+        active_adapters: mapping of {concept_name: scale_value}
+        e.g. {"combat": 1.0, "paladin": 0.8}
+        """
         if not self._adapter_index:
-            return  # No adapters loaded
+            return
 
         scales = []
         for name, idx in self._adapter_index.items():
-            scale = 1.0 if name == active_name else 0.0
+            # If name is in the map, use its scale; otherwise 0.0
+            scale = active_adapters.get(name, 0.0)
             scales.append({"id": idx, "scale": scale})
 
         try:
@@ -241,6 +248,7 @@ class LlamaCppExecutionNode:
                 timeout=10,
             )
             r.raise_for_status()
+            print(f"[LlamaCppNode] Stacked LoRA scales updated: {active_adapters}")
         except requests.exceptions.RequestException as e:
             print(f"[LlamaCppNode] /lora-adapters update failed: {e}")
 
@@ -256,11 +264,17 @@ class LlamaCppExecutionNode:
 
         try:
             messages = [{"role": "user", "content": prompt}]
-            return tok.apply_chat_template(
+            formatted = tok.apply_chat_template(
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
             )
+            # Suppress forced empty thinking blocks that confuse the 0.8B model
+            thinking_suffix = "<think>\n\n</think>\n\n"
+            if formatted.endswith(thinking_suffix):
+                formatted = formatted[: -len(thinking_suffix)]
+
+            return formatted
         except Exception:
             return prompt
 

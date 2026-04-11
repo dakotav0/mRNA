@@ -28,7 +28,7 @@ def analyze_dataset_boundary(
     """
     mid = model_id or config.current_model_id
     m_cfg = config.get_model_config(mid)
-    target_layer = layer if layer is not None else m_cfg.get("harvest_layer")
+    target_layer = layer if layer is not None else config.get_logic_layer(mid)
 
     # 1. Load Model & Interceptor
     backend = get_backend("torch")

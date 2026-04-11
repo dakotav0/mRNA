@@ -19,6 +19,7 @@ src/mrna/core/config.py
 src/mrna/data/dataset_utils.py
 src/mrna/data/paths.py
 src/mrna/execution/__init__.py
+src/mrna/execution/adapter_convert.py
 src/mrna/execution/llama_cpp_node.py
 src/mrna/execution/streaming_lora.py
 src/mrna/factory/__init__.py
@@ -28,6 +29,7 @@ src/mrna/factory/sampler.py
 src/mrna/memory/__init__.py
 src/mrna/router/__init__.py
 src/mrna/router/interceptor.py
+src/mrna/router/miin_router.py
 src/mrna/router/pooling.py
 src/mrna/router/sae.py
 src/mrna/substrate/__init__.py

@@ -43,6 +43,7 @@ if _PROJECT_ROOT not in sys.path:
 from mrna.core.config import MRNAPaths, config
 from src.mrna.execution.llama_cpp_node import LlamaCppExecutionNode
 from src.mrna.router.interceptor import ActivationInterceptor
+from src.mrna.router.miin_router import MiinRouter
 from src.mrna.router.sae import CBSAE
 
 # ---------------------------------------------------------------------------
@@ -55,25 +56,34 @@ m_cfg = config.get_model_config(m_id)
 MODEL_ID = m_cfg["path"]
 MODEL_REVISION = m_cfg.get("revision")
 MODEL_PATH = str(MRNAPaths.ROOT / m_cfg.get("gguf_path", f"models/{m_id}.gguf"))
-LAYER = m_cfg.get("harvest_layer", 0)
+LOGIC_LAYER = config.get_logic_layer(m_id)
+VOICE_LAYER = config.get_voice_layer(m_id)
 D_MODEL = m_cfg.get("d_model", 2048)
-SAE_WEIGHTS = str(MRNAPaths.DATA / m_id / "sae_weights.pt")
+SAE_WEIGHTS = str(MRNAPaths.get_sae_weights_path(m_id, LOGIC_LAYER))
 
 PORT = int(os.getenv("MRNA_PORT", "7437"))
 
 CONCEPT_NAMES = list(config.science_triad_datasets.keys())
 
-# Derive GGUF adapters from data hierarchy
-GGUF_ADAPTER_REGISTRY = {
-    c: str(MRNAPaths.DATA / m_id / "adapters" / f"{c}_lora" / f"{c}.gguf")
-    for c in CONCEPT_NAMES
-}
+# Dynamic GGUF discovery: map all adapters in the model's data subdirectory
+GGUF_ADAPTER_REGISTRY = {}
+adapters_dir = MRNAPaths.DATA / m_id / "adapters"
+if adapters_dir.exists():
+    for d in os.listdir(adapters_dir):
+        if d.endswith("_lora"):
+            name = d.replace("_lora", "")
+            # Expecting a GGUF adapter inside the lora folder
+            # Note: MRNAPaths.get_adapter_dir(name, m_id) could be used here
+            gguf_path = adapters_dir / d / f"{name}.gguf"
+            if gguf_path.exists():
+                GGUF_ADAPTER_REGISTRY[name] = str(gguf_path)
 
 # ---------------------------------------------------------------------------
 # Global state — initialised once at startup
 # ---------------------------------------------------------------------------
 
 _router: Optional["_PrefillRouter"] = None
+_miin: Optional[MiinRouter] = None
 _execution: Optional[LlamaCppExecutionNode] = None
 _ready = False
 
@@ -85,9 +95,8 @@ class _PrefillRouter:
         import torch
         from unsloth import FastLanguageModel
 
-        print(
-            f"[mRNA API] Loading {MODEL_ID!r} @ {MODEL_REVISION[:8]} for prefill routing …"
-        )
+        rev_str = f" @ {MODEL_REVISION[:8]}" if MODEL_REVISION else ""
+        print(f"[mRNA API] Loading {MODEL_ID!r}{rev_str} for prefill routing …")
         self.model, self.tokenizer = FastLanguageModel.from_pretrained(
             model_name=MODEL_ID,
             revision=MODEL_REVISION,
@@ -98,7 +107,8 @@ class _PrefillRouter:
         FastLanguageModel.for_inference(self.model)
         self.model.eval()
 
-        self.interceptor = ActivationInterceptor(target_layer=LAYER)
+        self.target_layers = config.get_harvest_layers(m_id)
+        self.interceptor = ActivationInterceptor(target_layers=self.target_layers)
         self.interceptor.attach_to_model(self.model)
 
         self.sae = CBSAE(
@@ -130,26 +140,44 @@ class _PrefillRouter:
 
         t0 = time.perf_counter()
         with torch.no_grad():
+            # Pass 1: Base prefill (Logic detection)
             self.model(**enc)
 
-        acts = self.interceptor.intercepted_activations[-1]  # (1, seq, d_model)
-        self.interceptor.intercepted_activations.clear()
+        # 1. Logic Pass Analysis
+        logic_acts = self.interceptor.intercepted_activations[LOGIC_LAYER][-1]
+        self.interceptor.intercepted_activations[LOGIC_LAYER].clear()
 
         mask = enc["attention_mask"].cpu().unsqueeze(-1).float()
-        pooled = ((acts * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)).float()
+        pooled = ((logic_acts * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)).float()
         pre_relu = self.sae.encoder(pooled)
         bottleneck = pre_relu[:, : len(CONCEPT_NAMES)]
         strengths = bottleneck[0]
 
         concept_idx = int(strengths.argmax().item())
         scores = {n: float(strengths[i].item()) for i, n in enumerate(CONCEPT_NAMES)}
-        return {
+
+        route_data = {
             "concept": CONCEPT_NAMES[concept_idx],
             "concept_idx": concept_idx,
             "confidence": scores[CONCEPT_NAMES[concept_idx]],
             "scores": scores,
             "latency_ms": (time.perf_counter() - t0) * 1000,
+            "logic_layer": LOGIC_LAYER,
         }
+
+        # 2. (Optional) Single-Pass Voice Signal
+        # If VOICE_LAYER was captured in PASS 1 (without adapter), we can still return it
+        if (
+            VOICE_LAYER is not None
+            and VOICE_LAYER in self.interceptor.intercepted_activations
+        ):
+            voice_acts = self.interceptor.intercepted_activations[VOICE_LAYER][-1]
+            self.interceptor.intercepted_activations[VOICE_LAYER].clear()
+            # For now, we just pass the raw stats or placeholder for PIDX
+            route_data["voice_layer"] = VOICE_LAYER
+            route_data["voice_signal_detected"] = True
+
+        return route_data
 
 
 # ---------------------------------------------------------------------------
@@ -168,14 +196,15 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def _startup():
-    global _router, _execution, _ready
+    global _router, _miin, _execution, _ready
 
     # Run the heavy model load in a thread so the event loop stays responsive
     loop = asyncio.get_event_loop()
 
     def _init():
-        global _router, _execution
+        global _router, _miin, _execution
         _router = _PrefillRouter()
+        _miin = MiinRouter()
         _execution = LlamaCppExecutionNode(
             model_path=MODEL_PATH,
             adapter_registry=GGUF_ADAPTER_REGISTRY,
@@ -198,7 +227,8 @@ class RouteRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     prompt: str
-    force_adapter: Optional[str] = None  # "biology" | "chemistry" | "physics"
+    npc_id: Optional[str] = None
+    force_adapter: Optional[str] = None  # overrides everything if provided
     max_tokens: int = 2048
 
 
@@ -222,13 +252,7 @@ def route(req: RouteRequest):
 @app.post("/generate")
 async def generate(req: GenerateRequest):
     """
-    Route prompt through SAE, activate the correct adapter, stream generation.
-
-    Emits Garden-format SSE events:
-        event: token\\ndata: "<text>"\\n\\n
-        event: mrna_route\\ndata: {concept, confidence, scores, latency_ms}\\n\\n
-        event: done\\ndata: {concept, generated_by, total_ms}\\n\\n
-        event: error\\ndata: "<message>"\\n\\n
+    Route prompt through SAE, resolve Split-Brain LoRA stack via PIDX, stream generation.
     """
     if not _ready:
         raise HTTPException(503, "Service initialising — retry in a moment")
@@ -238,29 +262,24 @@ async def generate(req: GenerateRequest):
         loop = asyncio.get_event_loop()
 
         # ── 1. Routing decision ─────────────────────────────────────────────
-        if req.force_adapter and req.force_adapter in CONCEPT_NAMES:
-            concept = req.force_adapter
-            adapter_path = GGUF_ADAPTER_REGISTRY[concept]
-            route_info = {
-                "concept": concept,
-                "concept_idx": CONCEPT_NAMES.index(concept),
-                "confidence": 1.0,
-                "scores": {c: (1.0 if c == concept else 0.0) for c in CONCEPT_NAMES},
-                "latency_ms": 0.0,
-                "forced": True,
-            }
+        if req.force_adapter:
+            # Absolute override
+            stack = {req.force_adapter: 1.0}
+            route_info = {"forced": req.force_adapter}
         else:
+            # SAE Abstract Pass
             route_info = await loop.run_in_executor(None, _router.route, req.prompt)
-            concept = route_info["concept"]
-            adapter_path = GGUF_ADAPTER_REGISTRY[concept]
+            # Resolve the logic + voice stack
+            stack = _miin.resolve_stack(route_info, req.npc_id)
 
         yield f"event: mrna_route\ndata: {json.dumps(route_info)}\n\n"
+        yield f"event: lora_stack\ndata: {json.dumps(stack)}\n\n"
 
-        # ── 2. Activate adapter & generate ─────────────────────────────────
+        # ── 2. Activate stacked adapters & generate ────────────────────────
         def _generate_sync() -> dict:
             """Runs in thread — returns generated text + llama-server timing."""
-            # Activate adapter via llama-server /lora-adapters
-            _execution._set_adapter_scales(active_name=concept)
+            # Update stacked scales (simultaneously sets Logic and Voice LoRAs)
+            _execution._set_adapter_scales(active_adapters=stack)
 
             # Apply chat template
             formatted = _execution._apply_chat_template(req.prompt)
@@ -272,6 +291,7 @@ async def generate(req: GenerateRequest):
                 "n_predict": req.max_tokens,
                 "temperature": 0.7,
                 "min_p": 0.05,
+                "stop": ["<|im_end|>", "<|im_start|>", "<|endoftext|>", "\n\n\n"],
                 "stream": True,
                 "cache_prompt": False,
             }
@@ -333,7 +353,7 @@ async def generate(req: GenerateRequest):
         yield f"event: done\ndata: {
             json.dumps(
                 {
-                    'concept': concept,
+                    'concept': next(iter(stack), route_info.get('forced', 'unknown')),
                     'generated_by': f'{m_id}-mrna',
                     'total_ms': round(total_ms),
                     'tokens_generated': generated['tokens_predicted'],

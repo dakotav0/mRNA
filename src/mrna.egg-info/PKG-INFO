@@ -3,7 +3,7 @@ Name: mrna
 Version: 0.1.0
 Summary: .mrna: Neural routing and adapter infrastructure
 Author-email: Dakota Veaux <dakotaveaux@gmail.com>
-Requires-Python: >=3.10
+Requires-Python: >=3.12
 License-File: LICENSE
 Requires-Dist: torch
 Requires-Dist: transformers

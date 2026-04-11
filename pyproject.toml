@@ -23,6 +23,7 @@ mrna-train-sae = "mrna.factory.sae:main"
 mrna-bleed-check = "mrna.analysis.boundary:main"
 mrna-eval = "mrna.analysis.eval:main"
 mrna-auto-train = "mrna.orchestrator:main"
+mrna-convert = "mrna.execution.adapter_convert:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]

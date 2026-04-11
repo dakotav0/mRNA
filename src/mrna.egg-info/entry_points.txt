@@ -1,6 +1,7 @@
 [console_scripts]
 mrna-auto-train = mrna.orchestrator:main
 mrna-bleed-check = mrna.analysis.boundary:main
+mrna-convert = mrna.execution.adapter_convert:main
 mrna-eval = mrna.analysis.eval:main
 mrna-harvest = mrna.factory.sampler:main
 mrna-train-adapter = mrna.factory.adapter:main

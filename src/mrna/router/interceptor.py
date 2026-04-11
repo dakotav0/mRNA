@@ -17,102 +17,107 @@ class ActivationInterceptor:
     offline to train our CB-SAE decoder to recognize specific concepts!
     """
 
-    def __init__(self, target_layer=12):
-        self.target_layer = target_layer
-        self.intercepted_activations = []
-        self.hook_handle = None
+    def __init__(self, target_layers=None):
+        if target_layers is None:
+            target_layers = [12]
+        if isinstance(target_layers, int):
+            target_layers = [target_layers]
 
-    def _hook_fn(self, module, input_args, output):
-        """
-        The callback PyTorch invokes during the forward pass.
-        output[0] contains the residual stream embedding for that layer.
-        Shape: [batch, sequence_length, hidden_dim]
-        """
-        # We detach it from the graph and move to CPU to avoid blowing up VRAM
-        # during sequential data collection.
-        hidden_states = output[0].detach().cpu()
-        self.intercepted_activations.append(hidden_states)
+        self.target_layers = target_layers
+        self.intercepted_activations = {layer: [] for layer in target_layers}
+        self.hook_handles = []
+
+    def _make_hook(self, layer_idx):
+        """Factory for generating per-layer hooks."""
+
+        def _hook_fn(module, input_args, output):
+            # output[0] = residual stream hidden states
+            hidden_states = output[0].detach().cpu()
+            self.intercepted_activations[layer_idx].append(hidden_states)
+
+        return _hook_fn
 
     def attach_to_model(self, model):
-        """Dynamically latches the hook onto the target transformer layer."""
+        """Dynamically latches hooks onto all target transformer layers."""
+        # Standard backbone detection logic remains the same...
+        backbone = model
+        if hasattr(model, "language_model"):
+            backbone = model.language_model
+        elif hasattr(model, "model") and hasattr(model.model, "layers"):
+            backbone = model.model
+        elif hasattr(model, "text_model"):
+            backbone = model.text_model
 
-        # Find the module that contains the transformer layers/blocks.
+        # 2. Find the module list (layers/blocks) within the selected backbone
         container = None
-        for name, module in model.named_modules():
-            if any(
-                k in name.lower() for k in ["vision", "encoder", "siglip", "aligner"]
-            ):
-                continue
-            # Check for common naming patterns for layer lists
-            if (
-                name.endswith(".layers")
-                or name.endswith(".blocks")
-                or name in ["layers", "blocks"]
-            ):
-                if hasattr(module, "__getitem__") and len(module) > self.target_layer:
-                    container = module
+        for child_name, child_module in backbone.named_children():
+            if child_name in ["layers", "blocks"] or child_name.endswith(".layers"):
+                # Use max of target_layers to verify bounds
+                if hasattr(child_module, "__getitem__") and len(child_module) > max(
+                    self.target_layers
+                ):
+                    container = child_module
                     break
 
         if not container:
-            # Fallback for very nested or custom Unsloth/HF structures
-            # (e.g., model.model.language_model.model.layers)
-            for name, module in model.named_modules():
-                if "layers" in name or "blocks" in name:
-                    if (
-                        hasattr(module, "__getitem__")
-                        and len(module) > self.target_layer
+            for name, module in backbone.named_modules():
+                if any(
+                    k in name.lower() for k in ["vision", "encoder", "siglip", "visual"]
+                ):
+                    continue
+                if (
+                    name.endswith(".layers")
+                    or name.endswith(".blocks")
+                    or name in ["layers", "blocks"]
+                ):
+                    if hasattr(module, "__getitem__") and len(module) > max(
+                        self.target_layers
                     ):
                         container = module
                         break
 
         if not container:
-            available_names = [n for n, _ in model.named_modules()]
-            print(
-                f"[Interceptor] [ERROR] Failed to find layers/blocks. Available modules (first 10): {available_names[:10]}"
-            )
-            if any("layers" in n for n in available_names):
-                print(
-                    f"[Interceptor] [DEBUG] Found potential 'layers' matches: {[n for n in available_names if 'layers' in n][:5]}"
-                )
-
             raise AttributeError(
-                f"Could not find transformer layer container in model type {type(model)}. "
-                "Ensure target_layer is within bounds."
+                f"Could not find transformer layer container in {type(model)}."
             )
 
-        layer_module = container[self.target_layer]
-
-        # Register the hook so it triggers *after* the layer finishes its math
-        self.hook_handle = layer_module.register_forward_hook(self._hook_fn)
-        print(
-            f"[Interceptor] Latched forward hook onto {type(layer_module).__name__} (Layer {self.target_layer}) successfully."
-        )
+        # 3. Register a hook for every requested layer
+        for layer_idx in self.target_layers:
+            layer_module = container[layer_idx]
+            handle = layer_module.register_forward_hook(self._make_hook(layer_idx))
+            self.hook_handles.append(handle)
+            print(
+                f"[Interceptor] Latched hook onto Layer {layer_idx} ({type(layer_module).__name__})"
+            )
 
     def detach(self):
-        """Crucial to remove the hook when not training the SAE to save memory/compute."""
-        if self.hook_handle:
-            self.hook_handle.remove()
-            self.hook_handle = None
-            print("[Interceptor] Hook detached successfully.")
+        """Removes all registered hooks."""
+        for handle in self.hook_handles:
+            handle.remove()
+        self.hook_handles = []
+        print(f"[Interceptor] All {len(self.target_layers)} hooks detached.")
 
-    def save_harvested_dataset(self, filename="activations_dataset.pt"):
-        """Saves the harvested real-world thoughts of the LLM to disk."""
-        if not self.intercepted_activations:
-            print("No activations intercepted!")
-            return
+    def save_harvested_dataset(
+        self, activations_dir: str, concept: str, is_test: bool = False
+    ):
+        """Saves harvested activations for ALL layers into separate subfolders."""
+        suffix = "test" if is_test else "train"
 
-        dataset = torch.cat(
-            self.intercepted_activations, dim=0
-        )  # [total_batches, seq, hidden_dim]
+        for layer_idx, tensors in self.intercepted_activations.items():
+            if not tensors:
+                continue
 
-        # Save to disk for offline SAE training
-        torch.save(dataset, filename)
-        print(
-            f"Saved {dataset.shape[0]} sequences of {dataset.shape[2]}-dim activations to {filename}"
-        )
+            layer_dir = os.path.join(activations_dir, f"layer_{layer_idx}")
+            os.makedirs(layer_dir, exist_ok=True)
 
-        # Clear RAM
-        self.intercepted_activations.clear()
+            combined = torch.cat(tensors, dim=0)
+            target_path = os.path.join(layer_dir, f"{concept}_{suffix}.pt")
+
+            torch.save(combined, target_path)
+            print(f"[Interceptor] Saved {combined.shape[0]} sequences to {target_path}")
+
+            # Clear list to save RAM
+            tensors.clear()
 
 
 if __name__ == "__main__":
