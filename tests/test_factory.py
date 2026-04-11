@@ -35,38 +35,48 @@ def test_sampler_orchestration(mock_load_ds, mock_flm):
         mock_flm.from_pretrained.assert_called()
 
 
-@patch("unsloth.is_bfloat16_supported")
-@patch("mrna.factory.adapter.TrainingArguments")
-@patch("unsloth.FastLanguageModel")
+@patch("trl.SFTConfig")
 @patch("trl.SFTTrainer")
-@patch("datasets.load_dataset")
-@patch("mrna.factory.adapter.HFDataset")
+@patch("unsloth.is_bfloat16_supported")
+@patch("unsloth.FastVisionModel")
+@patch("unsloth.FastLanguageModel")
 def test_adapter_training_orchestration(
-    mock_hf_ds, mock_load_ds, mock_trainer, mock_flm, mock_args, mock_bf16
+    mock_flm, mock_fvm, mock_bf16, mock_trainer, mock_sft_config
 ):
     """Verifies that train_adapter initializes the SFTTrainer."""
     mock_bf16.return_value = False
     mock_model = MagicMock()
     mock_tokenizer = MagicMock()
     mock_tokenizer.eos_token = "</s>"
+    mock_tokenizer.pad_token = None
+    # Set eos_token on the inner tokenizer that _tok unwraps to
+    mock_tokenizer.tokenizer.eos_token = "</s>"
+    mock_tokenizer.tokenizer.pad_token = None
+    # gemma-4-e2b uses FastVisionModel; both loaders return the same mock pair
     mock_flm.from_pretrained.return_value = (mock_model, mock_tokenizer)
+    mock_fvm.from_pretrained.return_value = (mock_model, mock_tokenizer)
 
-    # Mocking dataset loading entirely
+    # Mock dataset that supports the two-step map pipeline (format+truncate, then tokenize)
     mock_ds = MagicMock()
-    mock_ds.take.return_value = [{"instruction": "hi", "input": "", "output": "hey"}]
-    mock_load_ds.return_value = mock_ds
+    mock_ds.__len__ = MagicMock(return_value=10)
+    mock_ds.column_names = ["instruction", "input", "output"]
+    mock_ds.map.return_value = mock_ds
+    mock_ds.select.return_value = mock_ds
 
-    # Bypass formatter probing which hits the network/pyarrow
-    with patch("mrna.factory.adapter.get_dataset_formatter") as mock_formatter:
-        mock_formatter.return_value = lambda x: x
-        train_adapter(
-            concept="biology",
-            dataset_id="test/ds",
-            model_id="gemma-4-e2b",
-            output_dir="data/test_adapter",
-        )
-        mock_flm.from_pretrained.assert_called()
-        mock_trainer.assert_called()
+    # Both load_smart_dataset and get_dataset_formatter are imported inside the function
+    # body, so patch them at the source module rather than at mrna.factory.adapter.*
+    with patch("mrna.data.dataset_utils.load_smart_dataset") as mock_load:
+        with patch("mrna.data.dataset_utils.get_dataset_formatter") as mock_fmt:
+            mock_load.return_value = (mock_ds, False, "test/ds")
+            mock_fmt.return_value = MagicMock(return_value={"text": ["test text"]})
+            train_adapter(
+                concept="biology",
+                dataset_id="test/ds",
+                model_id="gemma-4-e2b",
+                output_dir="data/test_adapter",
+            )
+            mock_fvm.from_pretrained.assert_called()  # gemma-4 routes through FastVisionModel
+            mock_trainer.assert_called()
 
 
 def test_sae_training_stub():
