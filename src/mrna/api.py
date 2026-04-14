@@ -35,6 +35,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+try:
+    import httpx as _httpx
+
+    _HTTPX_AVAILABLE = True
+except ImportError:
+    _HTTPX_AVAILABLE = False
+
 # Resolve project root so src/ modules import cleanly regardless of cwd
 _PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _PROJECT_ROOT not in sys.path:
@@ -63,6 +70,9 @@ SAE_WEIGHTS = str(MRNAPaths.get_sae_weights_path(m_id, LOGIC_LAYER))
 
 PORT = int(os.getenv("MRNA_PORT", "7437"))
 
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
+
 CONCEPT_NAMES = list(config.science_triad_datasets.keys())
 
 # Dynamic GGUF discovery: map all adapters in the model's data subdirectory
@@ -86,6 +96,7 @@ _router: Optional["_PrefillRouter"] = None
 _miin: Optional[MiinRouter] = None
 _execution: Optional[LlamaCppExecutionNode] = None
 _ready = False
+_ollama_fallback = False
 
 
 class _PrefillRouter:
@@ -196,7 +207,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def _startup():
-    global _router, _miin, _execution, _ready
+    global _router, _miin, _execution, _ready, _ollama_fallback
 
     # Run the heavy model load in a thread so the event loop stays responsive
     loop = asyncio.get_event_loop()
@@ -211,9 +222,18 @@ async def _startup():
             tokenizer=_router.tokenizer,
         )
 
-    await loop.run_in_executor(None, _init)
+    try:
+        await loop.run_in_executor(None, _init)
+    except Exception as exc:
+        print(
+            f"[mRNA API] Full pipeline unavailable ({exc!r}); activating Ollama fallback",
+            file=sys.stderr,
+        )
+        _ollama_fallback = True
+
     _ready = True
-    print("[mRNA API] Ready — listening on port", PORT)
+    mode = "ollama-fallback" if _ollama_fallback else "full"
+    print(f"[mRNA API] Ready ({mode}) — listening on port {PORT}")
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +250,10 @@ class GenerateRequest(BaseModel):
     npc_id: Optional[str] = None
     force_adapter: Optional[str] = None  # overrides everything if provided
     max_tokens: int = 2048
+    # Optional conversation history — used by Ollama fallback and future full-pipeline chat
+    messages: Optional[list[dict]] = None
+    # Optional system prompt override — takes precedence over MIIN_ARCHETYPES default
+    system: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +283,69 @@ async def generate(req: GenerateRequest):
 
     async def _stream() -> AsyncGenerator[str, None]:
         t_start = time.perf_counter()
+
+        # ── Ollama fallback path ───────────────────────────────────────────
+        if _ollama_fallback:
+            npc_key = (req.npc_id or "").lower()
+            route_info = {
+                "concept": npc_key or "unknown",
+                "confidence": 1.0,
+                "mode": "ollama-fallback",
+                "adapter": req.force_adapter or npc_key or "unknown",
+            }
+            yield f"event: mrna_route\ndata: {json.dumps(route_info)}\n\n"
+
+            if not _HTTPX_AVAILABLE:
+                yield f"event: error\ndata: {json.dumps('httpx not installed — pip install httpx')}\n\n"
+                return
+
+            # Garden owns the system prompt / PIDX context — pass it through as-is.
+            # If Garden sent a full messages list, use it; otherwise build from prompt.
+            if req.messages:
+                msgs = list(req.messages)
+                if req.system and not any(m.get("role") == "system" for m in msgs):
+                    msgs = [{"role": "system", "content": req.system}] + msgs
+            else:
+                msgs = []
+                if req.system:
+                    msgs.append({"role": "system", "content": req.system})
+                msgs.append({"role": "user", "content": req.prompt})
+
+            try:
+                async with _httpx.AsyncClient(timeout=120.0) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{OLLAMA_URL}/api/chat",
+                        json={"model": OLLAMA_MODEL, "messages": msgs, "stream": True},
+                    ) as resp:
+                        resp.raise_for_status()
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                chunk = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            content = chunk.get("message", {}).get("content", "")
+                            if content:
+                                yield f"event: token\ndata: {json.dumps(content)}\n\n"
+                            if chunk.get("done"):
+                                total_ms = (time.perf_counter() - t_start) * 1000
+                                eval_count = chunk.get("eval_count", 0)
+                                eval_dur = chunk.get("eval_duration", 1) / 1e9  # ns → s
+                                tok_per_s = (
+                                    round(eval_count / eval_dur, 1) if eval_dur else 0.0
+                                )
+                                yield (
+                                    f"event: done\ndata: {json.dumps({'concept': npc_key or 'unknown', 'generated_by': OLLAMA_MODEL + '-ollama', 'total_ms': round(total_ms), 'tokens_generated': eval_count, 'tok_per_sec': tok_per_s, 'mode': 'ollama-fallback'})}\n\n"
+                                )
+                                return
+            except Exception as exc:
+                print(f"[mrna.api] Ollama fallback failed: {exc}", file=sys.stderr)
+                yield f"event: error\ndata: {json.dumps(str(exc))}\n\n"
+            return
+
+        # ── Full pipeline path ─────────────────────────────────────────────
         loop = asyncio.get_event_loop()
 
         # ── 1. Routing decision ─────────────────────────────────────────────

@@ -12,7 +12,11 @@ dependencies = [
     "trl",
     "datasets",
     "pyyaml",
-    "tqdm"
+    "tqdm",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27",
+    "requests",
 ]
 requires-python = ">=3.12"
 

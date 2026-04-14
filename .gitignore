@@ -19,7 +19,12 @@ unsloth_compiled_cache/
 *.bin
 *.pkl
 *.safetensors
+*.gguf
 *.jsonl
+
+# Scratch / runtime logs
+scratch/
+*.log
 
 # System/IDE
 .DS_Store

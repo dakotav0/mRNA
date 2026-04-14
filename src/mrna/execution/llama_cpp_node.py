@@ -38,6 +38,14 @@ import requests
 LLAMA_CPP_DIR = os.path.expanduser("~/llama.cpp")
 LLAMA_SERVER_BIN = os.path.join(LLAMA_CPP_DIR, "build", "bin", "llama-server")
 
+# Set MRNA_EXTERNAL_LLAMA=1 to attach to an already-running llama-server
+# (e.g. started by MIIN-kt's llama_server.sh) instead of spawning a new one.
+_EXTERNAL_LLAMA = os.environ.get("MRNA_EXTERNAL_LLAMA", "").strip() in (
+    "1",
+    "true",
+    "yes",
+)
+
 
 class LlamaCppExecutionNode:
     """
@@ -53,8 +61,8 @@ class LlamaCppExecutionNode:
         model_path: str,
         adapter_registry: dict,  # {concept_name: path/to/adapter.gguf}
         tokenizer=None,  # Transformers tokenizer for chat template
-        host: str = "127.0.0.1",
-        port: int = 8080,
+        host: str = os.environ.get("LLAMA_HOST", "127.0.0.1"),
+        port: int = int(os.environ.get("LLAMA_PORT", "8080")),
         n_gpu_layers: int = 99,  # 99 = full CUDA offload; 0 for CPU only
         ctx_size: int = 2048,
         max_tokens: int = 512,
@@ -73,15 +81,30 @@ class LlamaCppExecutionNode:
         self._adapter_index: dict[str, int] = {}
         self._proc: Optional[subprocess.Popen] = None
 
-        self._start_server(
-            n_gpu_layers=n_gpu_layers,
-            ctx_size=ctx_size,
-            startup_timeout=startup_timeout,
-        )
+        # If an external server is already running (started by MIIN's llama_server.sh
+        # or another mRNA process), attach to it rather than spawning a duplicate.
+        if _EXTERNAL_LLAMA or self._is_server_healthy():
+            print(
+                f"[LlamaCppNode] Attaching to existing llama-server at {self.base_url}"
+            )
+        else:
+            self._start_server(
+                n_gpu_layers=n_gpu_layers,
+                ctx_size=ctx_size,
+                startup_timeout=startup_timeout,
+            )
 
     # ------------------------------------------------------------------
     # Server lifecycle
     # ------------------------------------------------------------------
+
+    def _is_server_healthy(self) -> bool:
+        """Return True if a llama-server is already responding on the target port."""
+        try:
+            r = requests.get(f"{self.base_url}/health", timeout=2)
+            return r.status_code == 200
+        except requests.exceptions.ConnectionError:
+            return False
 
     def _start_server(
         self, n_gpu_layers: int, ctx_size: int, startup_timeout: int
